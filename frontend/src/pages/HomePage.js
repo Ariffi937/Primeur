@@ -30,26 +30,26 @@ export default function HomePage() {
                     <p className="text-boudal-gold uppercase tracking-[0.3em] text-xs md:text-sm font-semibold mb-4">
                         Institution Nimoise
                     </p>
-                    <h1 className="font-serif text-4xl sm:text-5xl lg:text-7xl font-bold mb-6 leading-tight tracking-tight">
+                    <h1 className="font-serif text-3xl sm:text-5xl lg:text-7xl font-bold mb-4 sm:mb-6 leading-tight tracking-tight">
                         L'Excellence des<br />
                         <span className="italic text-boudal-ivory">Halles de Nimes</span>
                     </h1>
-                    <div className="w-24 h-1 bg-boudal-gold mx-auto mb-8" />
-                    <p className="text-base md:text-lg mb-10 font-light text-gray-100 max-w-3xl mx-auto">
+                    <div className="w-16 sm:w-24 h-1 bg-boudal-gold mx-auto mb-6 sm:mb-8" />
+                    <p className="text-sm sm:text-base md:text-lg mb-8 sm:mb-10 font-light text-gray-100 max-w-3xl mx-auto px-4">
                         Depuis plus de 20 ans, nous selectionnons chaque matin le meilleur du terroir pour votre table.
                     </p>
-                    <div className="flex flex-col sm:flex-row gap-4 justify-center px-6">
+                    <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center px-4 sm:px-6">
                         <button
                             data-testid="hero-cta-shop"
                             onClick={() => navigate("/boutique")}
-                            className="bg-boudal-gold text-white font-serif italic text-lg py-4 px-10 hover:bg-white hover:text-boudal-green transition-colors"
+                            className="bg-boudal-gold text-white font-serif italic text-base sm:text-lg py-3.5 sm:py-4 px-8 sm:px-10 hover:bg-white hover:text-boudal-green transition-colors active:scale-[0.97] rounded-sm"
                         >
                             Faire mon marche en ligne
                         </button>
                         <button
                             data-testid="hero-cta-story"
                             onClick={() => document.getElementById("histoire")?.scrollIntoView({ behavior: "smooth" })}
-                            className="bg-white/10 backdrop-blur-md border border-white text-white font-serif italic text-lg py-4 px-10 hover:bg-white hover:text-boudal-green transition-colors"
+                            className="bg-white/10 backdrop-blur-md border border-white text-white font-serif italic text-base sm:text-lg py-3.5 sm:py-4 px-8 sm:px-10 hover:bg-white hover:text-boudal-green transition-colors active:scale-[0.97] rounded-sm"
                         >
                             Notre Histoire
                         </button>

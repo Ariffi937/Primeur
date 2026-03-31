@@ -36,7 +36,7 @@ export default function ProductCard({ product }) {
 
     return (
         <div data-testid={`product-card-${product.id}`} className="group">
-            <div className="relative overflow-hidden rounded-lg aspect-square mb-3 bg-gray-100">
+            <div className="relative overflow-hidden rounded-xl aspect-square mb-3 bg-gray-100">
                 <img
                     src={product.image_url}
                     alt={product.name}
@@ -45,48 +45,48 @@ export default function ProductCard({ product }) {
                 />
             </div>
 
-            <h3 className="font-serif text-base font-semibold text-boudal-green leading-tight mb-1">
+            <h3 className="font-serif text-sm sm:text-base font-semibold text-boudal-green leading-tight mb-1 line-clamp-2">
                 {product.name}
             </h3>
 
-            <p className="text-sm font-medium text-boudal-gold mb-3">
+            <p className="text-sm font-medium text-boudal-gold mb-2 sm:mb-3">
                 {displayPrice}&euro; / {displayUnit}
             </p>
 
             {canToggle && (
-                <div data-testid={`unit-toggle-${product.id}`} className="flex mb-3 rounded-full overflow-hidden border border-boudal-green">
+                <div data-testid={`unit-toggle-${product.id}`} className="flex mb-2 sm:mb-3 rounded-full overflow-hidden border border-boudal-green">
                     <button
                         data-testid={`toggle-weight-${product.id}`}
                         onClick={() => { setMode("weight"); setQuantity(0.5); }}
-                        className={`flex-1 py-1.5 text-xs font-medium transition-colors ${mode === "weight" ? "bg-boudal-green text-boudal-ivory" : "text-boudal-green hover:bg-boudal-green/5"}`}
+                        className={`flex-1 py-2 text-xs font-medium transition-colors ${mode === "weight" ? "bg-boudal-green text-boudal-ivory" : "text-boudal-green hover:bg-boudal-green/5"}`}
                     >
                         Au poids
                     </button>
                     <button
                         data-testid={`toggle-piece-${product.id}`}
                         onClick={() => { setMode("piece"); setQuantity(1); }}
-                        className={`flex-1 py-1.5 text-xs font-medium transition-colors ${mode === "piece" ? "bg-boudal-green text-boudal-ivory" : "text-boudal-green hover:bg-boudal-green/5"}`}
+                        className={`flex-1 py-2 text-xs font-medium transition-colors ${mode === "piece" ? "bg-boudal-green text-boudal-ivory" : "text-boudal-green hover:bg-boudal-green/5"}`}
                     >
                         A la piece
                     </button>
                 </div>
             )}
 
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-1 sm:gap-2 mb-2 sm:mb-3 justify-center">
                 <button
                     data-testid={`qty-minus-${product.id}`}
                     onClick={() => adjustQty(-1)}
-                    className="w-8 h-8 rounded-full border border-boudal-sage/50 flex items-center justify-center text-boudal-green hover:bg-boudal-sage/20 transition-colors"
+                    className="w-9 h-9 sm:w-8 sm:h-8 rounded-full border border-boudal-sage/50 flex items-center justify-center text-boudal-green hover:bg-boudal-sage/20 transition-colors active:bg-boudal-sage/30"
                 >
                     <Minus className="w-3 h-3" />
                 </button>
-                <span className="w-16 text-center text-sm font-medium text-boudal-green">
+                <span className="w-14 sm:w-16 text-center text-sm font-medium text-boudal-green">
                     {isPieceMode ? quantity : quantity.toFixed(1)} {isPieceMode ? "p." : (isKg ? "kg" : "")}
                 </span>
                 <button
                     data-testid={`qty-plus-${product.id}`}
                     onClick={() => adjustQty(1)}
-                    className="w-8 h-8 rounded-full border border-boudal-sage/50 flex items-center justify-center text-boudal-green hover:bg-boudal-sage/20 transition-colors"
+                    className="w-9 h-9 sm:w-8 sm:h-8 rounded-full border border-boudal-sage/50 flex items-center justify-center text-boudal-green hover:bg-boudal-sage/20 transition-colors active:bg-boudal-sage/30"
                 >
                     <Plus className="w-3 h-3" />
                 </button>
@@ -95,7 +95,7 @@ export default function ProductCard({ product }) {
             <button
                 data-testid={`add-to-cart-${product.id}`}
                 onClick={handleAdd}
-                className="w-full bg-boudal-gold text-white py-2.5 text-sm font-semibold uppercase tracking-wider hover:bg-boudal-gold/90 transition-colors"
+                className="w-full bg-boudal-gold text-white py-3 text-xs sm:text-sm font-semibold uppercase tracking-wider hover:bg-boudal-gold/90 transition-colors rounded-lg active:scale-[0.97]"
             >
                 Ajouter
             </button>

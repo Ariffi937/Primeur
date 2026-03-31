@@ -19,6 +19,9 @@ import jwt
 from emergentintegrations.payments.stripe.checkout import (
     StripeCheckout, CheckoutSessionRequest
 )
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
+from fastapi import BackgroundTasks
 
 # MongoDB
 mongo_url = os.environ['MONGO_URL']
@@ -127,6 +130,7 @@ class OrderItemCreate(BaseModel):
 class OrderCreate(BaseModel):
     customer_name: str
     customer_phone: str
+    customer_email: str = ""
     customer_address: str = ""
     delivery_method: str = "livraison"
     payment_method: str = "especes"
@@ -142,6 +146,103 @@ class CreateSessionRequest(BaseModel):
 
 class StatusUpdateRequest(BaseModel):
     status: str
+
+
+# ==================== EMAIL HELPERS ====================
+
+def build_order_email_html(order: dict, items: list, is_admin: bool = False) -> str:
+    title = "Nouvelle commande !" if is_admin else "Confirmation de votre commande"
+    greeting = "Une nouvelle commande vient d'arriver." if is_admin else f"Bonjour {order['customer_name']},"
+    intro = "Voici le detail :" if is_admin else "Nous avons bien enregistre votre commande. Voici le recapitulatif :"
+    delivery_label = "Livraison" if order["delivery_method"] == "livraison" else "Retrait aux Halles"
+    payment_label = "Especes" if order["payment_method"] == "especes" else "Carte Bancaire"
+
+    items_html = ""
+    for item in items:
+        qty_display = f"{item['quantity']} {'pcs' if item['mode'] == 'piece' else 'kg'}"
+        items_html += f"""
+        <tr>
+            <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:14px;color:#333;">{item['product_name']}</td>
+            <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:14px;color:#666;text-align:center;">{qty_display}</td>
+            <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:14px;color:#333;text-align:right;font-weight:600;">{item['line_total']:.2f} EUR</td>
+        </tr>"""
+
+    return f"""
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#F8F4EC;">
+        <div style="background:#0F3D3E;padding:24px;text-align:center;">
+            <h1 style="font-family:Georgia,serif;color:white;margin:0;font-size:24px;">
+                Primeur <span style="color:#C9A063;font-style:italic;">BOUDAL</span>
+            </h1>
+            <p style="color:#A8C3A0;margin:4px 0 0;font-size:12px;">Halles de Nimes</p>
+        </div>
+        <div style="padding:32px 24px;">
+            <h2 style="color:#0F3D3E;margin:0 0 8px;font-family:Georgia,serif;">{title}</h2>
+            <p style="color:#666;font-size:14px;margin:0 0 4px;">{greeting}</p>
+            <p style="color:#666;font-size:14px;margin:0 0 24px;">{intro}</p>
+            <div style="background:white;border-radius:8px;overflow:hidden;margin-bottom:20px;">
+                <div style="padding:12px 16px;background:#f5f5f5;border-bottom:1px solid #eee;">
+                    <p style="margin:0;font-size:13px;color:#666;">
+                        <strong style="color:#0F3D3E;">Client :</strong> {order['customer_name']} | {order['customer_phone']}
+                    </p>
+                    <p style="margin:4px 0 0;font-size:13px;color:#666;">
+                        <strong style="color:#0F3D3E;">Mode :</strong> {delivery_label} | <strong style="color:#0F3D3E;">Paiement :</strong> {payment_label}
+                    </p>
+                    {"<p style='margin:4px 0 0;font-size:13px;color:#666;'><strong style='color:#0F3D3E;'>Adresse :</strong> " + order['customer_address'] + "</p>" if order.get('customer_address') else ""}
+                </div>
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead>
+                        <tr style="background:#fafafa;">
+                            <th style="padding:10px 12px;text-align:left;font-size:12px;color:#999;text-transform:uppercase;">Produit</th>
+                            <th style="padding:10px 12px;text-align:center;font-size:12px;color:#999;text-transform:uppercase;">Qte</th>
+                            <th style="padding:10px 12px;text-align:right;font-size:12px;color:#999;text-transform:uppercase;">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>{items_html}</tbody>
+                </table>
+            </div>
+            <div style="background:#0F3D3E;color:white;padding:16px;border-radius:8px;text-align:center;">
+                <span style="font-size:14px;">Total de la commande</span><br/>
+                <strong style="font-size:24px;color:#C9A063;">{order['total_amount']:.2f} EUR</strong>
+            </div>
+            {f"<p style='margin-top:16px;font-size:13px;color:#666;'><em>Note : {order['global_comment']}</em></p>" if order.get('global_comment') else ""}
+        </div>
+        <div style="background:#0F3D3E;padding:16px;text-align:center;">
+            <p style="color:#A8C3A0;font-size:11px;margin:0;">Primeur BOUDAL - Halles de Nimes, Av. General Perrier, 30000 Nimes</p>
+            <p style="color:#A8C3A0;font-size:11px;margin:4px 0 0;">04 66 29 52 23</p>
+        </div>
+    </div>"""
+
+
+def send_email_notification(to_email: str, subject: str, html_content: str):
+    api_key = os.environ.get("SENDGRID_API_KEY")
+    sender = os.environ.get("SENDER_EMAIL")
+    if not api_key or not sender or not to_email:
+        logger.warning(f"Email skipped: missing config (to={to_email}, sender={sender})")
+        return
+    try:
+        message = Mail(
+            from_email=sender,
+            to_emails=to_email,
+            subject=subject,
+            html_content=html_content,
+        )
+        sg = SendGridAPIClient(api_key)
+        response = sg.send(message)
+        logger.info(f"Email sent to {to_email}: status {response.status_code}")
+    except Exception as e:
+        logger.error(f"Email send error to {to_email}: {e}")
+
+
+def send_order_emails(order: dict, items: list):
+    customer_email = order.get("customer_email", "")
+    if customer_email:
+        html = build_order_email_html(order, items, is_admin=False)
+        send_email_notification(customer_email, f"Primeur BOUDAL - Commande #{order['id'][:8]} confirmee", html)
+
+    admin_email = os.environ.get("ADMIN_NOTIFICATION_EMAIL")
+    if admin_email:
+        html = build_order_email_html(order, items, is_admin=True)
+        send_email_notification(admin_email, f"Nouvelle commande #{order['id'][:8]} - {order['customer_name']}", html)
 
 
 # ==================== AUTH ENDPOINTS ====================
@@ -211,12 +312,13 @@ async def delete_product(product_id: str, user=Depends(get_current_user)):
 # ==================== ORDER ENDPOINTS ====================
 
 @api_router.post("/orders")
-async def create_order(body: OrderCreate):
+async def create_order(body: OrderCreate, background_tasks: BackgroundTasks):
     order_id = str(uuid.uuid4())
     order = {
         "id": order_id,
         "customer_name": body.customer_name,
         "customer_phone": body.customer_phone,
+        "customer_email": body.customer_email,
         "customer_address": body.customer_address,
         "delivery_method": body.delivery_method,
         "payment_method": body.payment_method,
@@ -227,6 +329,7 @@ async def create_order(body: OrderCreate):
     }
     await db.orders.insert_one(order)
 
+    items_data = []
     for item in body.items:
         order_item = {
             "id": str(uuid.uuid4()),
@@ -239,8 +342,12 @@ async def create_order(body: OrderCreate):
             "line_total": item.line_total
         }
         await db.order_items.insert_one(order_item)
+        items_data.append(order_item)
 
-    return {k: v for k, v in order.items() if k != "_id"}
+    clean_order = {k: v for k, v in order.items() if k != "_id"}
+    background_tasks.add_task(send_order_emails, clean_order, items_data)
+
+    return clean_order
 
 
 @api_router.get("/orders")

@@ -97,15 +97,15 @@ export default function BoutiquePage() {
             </div>
 
             {/* Content */}
-            <div className="max-w-7xl mx-auto px-4 py-8 md:py-12">
+            <div className="max-w-7xl mx-auto px-3 sm:px-4 py-6 md:py-12">
                 {!activeSubcategory ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+                    <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6">
                         {subcategories.map(([sub, count]) => (
                             <div
                                 key={sub}
                                 data-testid={`category-card-${sub}`}
                                 onClick={() => setActiveSubcategory(sub)}
-                                className="relative h-48 md:h-64 rounded-xl overflow-hidden cursor-pointer group shadow-md"
+                                className="relative h-36 sm:h-48 md:h-64 rounded-xl overflow-hidden cursor-pointer group shadow-md active:scale-[0.98] transition-transform"
                             >
                                 <img
                                     src={subcategoryImages[sub] || "https://images.pexels.com/photos/1132047/pexels-photo-1132047.jpeg?auto=compress&cs=tinysrgb&w=600"}
@@ -126,7 +126,7 @@ export default function BoutiquePage() {
                         ))}
                     </div>
                 ) : (
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 md:gap-8">
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6 md:gap-8">
                         {subcategoryProducts.map(product => (
                             <ProductCard key={product.id} product={product} />
                         ))}

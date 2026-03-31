@@ -111,6 +111,7 @@ class PrimeurBoudalAPITester:
         order_data = {
             "customer_name": "Test Customer",
             "customer_phone": "0123456789",
+            "customer_email": "test@example.com",
             "customer_address": "123 Rue Test, Nimes",
             "delivery_method": "livraison",
             "payment_method": "especes",
@@ -129,7 +130,7 @@ class PrimeurBoudalAPITester:
         }
         
         success, response = self.run_test(
-            "Create Order (Especes)",
+            "Create Order with Email (Phase 2)",
             "POST",
             "api/orders",
             200,
@@ -137,7 +138,13 @@ class PrimeurBoudalAPITester:
         )
         if success:
             order_id = response.get('id')
+            customer_email = response.get('customer_email')
             print(f"   Order created with ID: {order_id}")
+            print(f"   Customer email stored: {customer_email}")
+            if customer_email == "test@example.com":
+                print("   ✅ Email field correctly stored")
+            else:
+                print(f"   ⚠️  Email mismatch: expected test@example.com, got {customer_email}")
             return order_id
         return None
 
@@ -152,6 +159,28 @@ class PrimeurBoudalAPITester:
         if success:
             orders_count = len(response) if isinstance(response, list) else 0
             print(f"   Found {orders_count} orders")
+        return success
+
+    def test_get_order_detail(self, order_id):
+        """Test GET /api/orders/{id} returns order detail with customer_email"""
+        if not order_id:
+            print("❌ No order ID available for detail test")
+            return False
+            
+        success, response = self.run_test(
+            "Get Order Detail (with Email)",
+            "GET",
+            f"api/orders/{order_id}",
+            200
+        )
+        if success:
+            customer_email = response.get('customer_email')
+            print(f"   Order detail retrieved")
+            print(f"   Customer email in detail: {customer_email}")
+            if customer_email == "test@example.com":
+                print("   ✅ Email field correctly retrieved in order detail")
+            else:
+                print(f"   ⚠️  Email mismatch in detail: expected test@example.com, got {customer_email}")
         return success
 
     def test_update_order_status(self, order_id):
@@ -197,6 +226,7 @@ def main():
     tester.test_get_orders()
     
     if order_id:
+        tester.test_get_order_detail(order_id)
         tester.test_update_order_status(order_id)
     
     # Print results

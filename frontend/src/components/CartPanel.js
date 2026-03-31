@@ -10,7 +10,7 @@ export default function CartPanel({ open, onOpenChange }) {
     const [showCheckout, setShowCheckout] = useState(false);
     const [loading, setLoading] = useState(false);
     const [success, setSuccess] = useState(false);
-    const [form, setForm] = useState({ name: "", phone: "", address: "", delivery: "livraison", payment: "especes", comment: "" });
+    const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", delivery: "livraison", payment: "especes", comment: "" });
 
     const handleSubmit = async () => {
         if (!form.name || !form.phone) {
@@ -26,6 +26,7 @@ export default function CartPanel({ open, onOpenChange }) {
             const orderData = {
                 customer_name: form.name,
                 customer_phone: form.phone,
+                customer_email: form.email,
                 customer_address: form.address,
                 delivery_method: form.delivery,
                 payment_method: form.payment,
@@ -65,7 +66,7 @@ export default function CartPanel({ open, onOpenChange }) {
     const resetAndClose = () => {
         setShowCheckout(false);
         setSuccess(false);
-        setForm({ name: "", phone: "", address: "", delivery: "livraison", payment: "especes", comment: "" });
+        setForm({ name: "", phone: "", email: "", address: "", delivery: "livraison", payment: "especes", comment: "" });
         onOpenChange(false);
     };
 
@@ -91,9 +92,9 @@ export default function CartPanel({ open, onOpenChange }) {
 
     return (
         <Sheet open={open} onOpenChange={onOpenChange}>
-            <SheetContent side="right" className="w-full sm:max-w-md bg-white p-0 flex flex-col">
-                <SheetHeader className="p-5 bg-boudal-green text-white">
-                    <SheetTitle className="font-serif text-xl italic text-white">Votre Panier</SheetTitle>
+            <SheetContent side="right" className="w-full sm:max-w-md bg-white p-0 flex flex-col [&>button]:top-4 [&>button]:right-4">
+                <SheetHeader className="p-4 sm:p-5 bg-boudal-green text-white">
+                    <SheetTitle className="font-serif text-lg sm:text-xl italic text-white">Votre Panier</SheetTitle>
                     <SheetDescription className="text-boudal-sage text-xs">
                         {items.length > 0 ? `${items.length} article${items.length > 1 ? "s" : ""}` : "Vide"}
                     </SheetDescription>
@@ -122,27 +123,28 @@ export default function CartPanel({ open, onOpenChange }) {
                         </div>
 
                         {showCheckout && (
-                            <div className="space-y-3 border-t border-dashed border-gray-300 pt-3 max-h-[40vh] overflow-y-auto">
-                                <div className="grid grid-cols-2 gap-2">
-                                    <input data-testid="checkout-name" value={form.name} onChange={e => setForm(p => ({...p, name: e.target.value}))} placeholder="Votre Nom" className="p-2.5 border border-gray-300 rounded text-sm bg-white focus:border-boudal-gold outline-none" />
-                                    <input data-testid="checkout-phone" value={form.phone} onChange={e => setForm(p => ({...p, phone: e.target.value}))} placeholder="Telephone" className="p-2.5 border border-gray-300 rounded text-sm bg-white focus:border-boudal-gold outline-none" />
+                            <div className="space-y-3 border-t border-dashed border-gray-300 pt-3 max-h-[50vh] overflow-y-auto">
+                                <input data-testid="checkout-name" value={form.name} onChange={e => setForm(p => ({...p, name: e.target.value}))} placeholder="Votre Nom *" className="w-full p-3 border border-gray-300 rounded-lg text-sm bg-white focus:border-boudal-gold outline-none" />
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <input data-testid="checkout-phone" value={form.phone} onChange={e => setForm(p => ({...p, phone: e.target.value}))} placeholder="Telephone *" className="p-3 border border-gray-300 rounded-lg text-sm bg-white focus:border-boudal-gold outline-none" />
+                                    <input data-testid="checkout-email" value={form.email} onChange={e => setForm(p => ({...p, email: e.target.value}))} placeholder="Email (confirmation)" type="email" className="p-3 border border-gray-300 rounded-lg text-sm bg-white focus:border-boudal-gold outline-none" />
                                 </div>
-                                <input data-testid="checkout-address" value={form.address} onChange={e => setForm(p => ({...p, address: e.target.value}))} placeholder="Adresse complete a Nimes" className="w-full p-2.5 border border-gray-300 rounded text-sm bg-white focus:border-boudal-gold outline-none" />
-                                <select data-testid="checkout-delivery" value={form.delivery} onChange={e => setForm(p => ({...p, delivery: e.target.value}))} className="w-full p-2.5 border border-gray-300 rounded text-sm bg-white focus:border-boudal-gold outline-none">
+                                <input data-testid="checkout-address" value={form.address} onChange={e => setForm(p => ({...p, address: e.target.value}))} placeholder="Adresse complete a Nimes" className="w-full p-3 border border-gray-300 rounded-lg text-sm bg-white focus:border-boudal-gold outline-none" />
+                                <select data-testid="checkout-delivery" value={form.delivery} onChange={e => setForm(p => ({...p, delivery: e.target.value}))} className="w-full p-3 border border-gray-300 rounded-lg text-sm bg-white focus:border-boudal-gold outline-none">
                                     <option value="livraison">Livraison a domicile (Nimes)</option>
                                     <option value="retrait">Retrait aux Halles (Click & Collect)</option>
                                 </select>
                                 <div className="space-y-2 text-sm">
-                                    <label className="flex items-center gap-3 p-2.5 border rounded cursor-pointer hover:bg-white transition bg-gray-50">
+                                    <label className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-white transition bg-gray-50">
                                         <input type="radio" name="pay" value="especes" checked={form.payment === "especes"} onChange={() => setForm(p => ({...p, payment: "especes"}))} className="text-boudal-green" />
                                         <span>Especes a la livraison</span>
                                     </label>
-                                    <label className="flex items-center gap-3 p-2.5 border rounded cursor-pointer hover:bg-white transition bg-gray-50">
+                                    <label className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-white transition bg-gray-50">
                                         <input type="radio" name="pay" value="cb" checked={form.payment === "cb"} onChange={() => setForm(p => ({...p, payment: "cb"}))} className="text-boudal-green" />
                                         <span>Paiement en ligne (Carte Bancaire)</span>
                                     </label>
                                 </div>
-                                <textarea data-testid="checkout-comment" value={form.comment} onChange={e => setForm(p => ({...p, comment: e.target.value}))} rows={2} placeholder="Note globale..." className="w-full p-2.5 border border-gray-300 rounded text-sm bg-white focus:border-boudal-gold outline-none" />
+                                <textarea data-testid="checkout-comment" value={form.comment} onChange={e => setForm(p => ({...p, comment: e.target.value}))} rows={2} placeholder="Note globale..." className="w-full p-3 border border-gray-300 rounded-lg text-sm bg-white focus:border-boudal-gold outline-none" />
                             </div>
                         )}
 
@@ -150,7 +152,7 @@ export default function CartPanel({ open, onOpenChange }) {
                             <button
                                 data-testid="validate-cart-btn"
                                 onClick={() => setShowCheckout(true)}
-                                className="w-full bg-boudal-green text-white py-3.5 font-semibold text-sm uppercase tracking-wider hover:bg-boudal-green/90 transition-colors"
+                                className="w-full bg-boudal-green text-white py-4 font-semibold text-sm uppercase tracking-wider hover:bg-boudal-green/90 transition-colors rounded-lg active:scale-[0.98]"
                             >
                                 Valider mon panier
                             </button>
@@ -159,7 +161,7 @@ export default function CartPanel({ open, onOpenChange }) {
                                 data-testid="confirm-order-btn"
                                 onClick={handleSubmit}
                                 disabled={loading}
-                                className="w-full bg-boudal-gold text-white py-3.5 font-semibold text-sm uppercase tracking-wider hover:bg-boudal-gold/90 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                                className="w-full bg-boudal-gold text-white py-4 font-semibold text-sm uppercase tracking-wider hover:bg-boudal-gold/90 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 rounded-lg active:scale-[0.98]"
                             >
                                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                                 {form.payment === "cb" ? "Payer par carte" : "Confirmer la commande"}

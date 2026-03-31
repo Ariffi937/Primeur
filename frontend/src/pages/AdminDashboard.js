@@ -261,6 +261,7 @@ export default function AdminDashboard() {
                                 <div><span className="text-gray-500">Livraison:</span> <strong className="capitalize">{orderDetail.delivery_method}</strong></div>
                                 <div><span className="text-gray-500">Paiement:</span> <strong className="capitalize">{orderDetail.payment_method}</strong></div>
                             </div>
+                            {orderDetail.customer_email && <div><span className="text-gray-500">Email:</span> {orderDetail.customer_email}</div>}
                             {orderDetail.customer_address && <div><span className="text-gray-500">Adresse:</span> {orderDetail.customer_address}</div>}
                             {orderDetail.global_comment && <div><span className="text-gray-500">Note:</span> {orderDetail.global_comment}</div>}
                             <div className="border-t pt-3 space-y-2">
