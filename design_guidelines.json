@@ -1,0 +1,91 @@
+{
+  "theme": "light",
+  "archetype": "Archetype 1 (Organic & Earthy) with Archetype 5 (Jewel & Luxury) influence",
+  "domain": "Premium E-commerce (Fruits & Vegetables)",
+  "language": "fr",
+  "colors": {
+    "primary": "#0F3D3E",
+    "secondary": "#C9A063",
+    "background": "#F8F4EC",
+    "accent": "#A8C3A0",
+    "surface": "#FFFFFF",
+    "text": {
+      "main": "#0F3D3E",
+      "muted": "#5C7475",
+      "inverse": "#F8F4EC"
+    },
+    "border": "rgba(168, 195, 160, 0.4)"
+  },
+  "typography": {
+    "headings": {
+      "fontFamily": "Playfair Display, serif",
+      "usage": "H1-H6, Hero text, Category Titles, Product Names",
+      "tracking": "tracking-tight",
+      "weights": ["400", "600", "700"]
+    },
+    "body": {
+      "fontFamily": "Inter, sans-serif",
+      "usage": "Paragraphs, pricing, buttons, meta info, admin UI",
+      "weights": ["400", "500"]
+    }
+  },
+  "layout_and_spacing": {
+    "philosophy": "Generous Spacing Philosophy. Use 2-3x more spacing than typical designs.",
+    "storefront_margins": "py-24 px-8 md:px-16",
+    "product_grid": "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 md:gap-12",
+    "category_bento": "grid grid-cols-1 md:grid-cols-12 gap-8. Mix large spans (col-span-8) and small spans (col-span-4) for categories.",
+    "admin_grid": "Tight bento grid (gap-4 or gap-6) for dashboards. Use h-full for children."
+  },
+  "components_strategy": {
+    "header": "Crystal Glass style: sticky top-0 z-50 backdrop-blur-xl bg-[#F8F4EC]/80 border-b border-[#A8C3A0]/30. Links must be visible on desktop.",
+    "hero": "Full bleed image. Overlay: max bg-black/40 or bg-gradient-to-t from-[#0F3D3E]/80 to-transparent. DO NOT obscure image completely.",
+    "product_card": "Cardless design. Image wrapper with overflow-hidden, image scales slightly on hover. Text below image left-aligned. Playfair for title, Inter for price.",
+    "weight_toggle": "Pill-shaped toggle (Piece vs Kilo) above Add to Cart button. Active: bg-[#0F3D3E] text-[#F8F4EC]. Inactive: bg-transparent border border-[#0F3D3E] text-[#0F3D3E].",
+    "cart_panel": "Shadcn Sheet. Sliding from right. Clean layout, no unnecessary borders. Primary color for checkout CTA.",
+    "checkout_form": "Shadcn Form/Input. Left-aligned labels. Use #F8F4EC background with solid white input fields and subtle #A8C3A0 borders.",
+    "admin_panel": "Sidebar bg-[#0F3D3E] text-[#F8F4EC]. Main content bg-[#F8F4EC]. Use Shadcn Table, Dialog, Form for CRUD. Minimalist #FFFFFF card surfaces for data tables.",
+    "buttons": "Primary CTA: bg-[#C9A063] text-white hover:bg-[#C9A063]/90 rounded-none w-full uppercase tracking-wider text-sm font-semibold transition-colors."
+  },
+  "interactions_and_motion": {
+    "scroll": "Use Lenis for smooth momentum scrolling if possible, or smooth CSS scroll behavior.",
+    "hover_states": "Product images: scale-105 duration-500 ease-out. Buttons: subtle background tint shift. Text links: explicitly set hover color.",
+    "transitions": "Use specific properties (e.g., transition-transform, transition-colors), avoid 'all'."
+  },
+  "media_urls": [
+    {
+      "category": "hero",
+      "url": "https://images.pexels.com/photos/15279908/pexels-photo-15279908.jpeg",
+      "description": "Vibrant display of fresh vegetables, used for the main landing page hero section."
+    },
+    {
+      "category": "category_fruits",
+      "url": "https://images.unsplash.com/photo-1629527821795-79d67a6e39bf",
+      "description": "Red and yellow apple display, used for the Fruits category card."
+    },
+    {
+      "category": "category_vegetables",
+      "url": "https://images.unsplash.com/photo-1722810767143-40a6a7a74b13",
+      "description": "Fresh green beans, used for the Vegetables category card."
+    },
+    {
+      "category": "about_services",
+      "url": "https://images.pexels.com/photos/36239860/pexels-photo-36239860.jpeg",
+      "description": "Cozy deli/store showcase, used for the Services or About section background."
+    }
+  ],
+  "accessibility_and_testing": {
+    "contrast": "Ensure text over #C9A063 meets minimum contrast. Use text shadow if needed.",
+    "testing_attributes": "All interactive elements MUST include data-testid. Format: kebab-case, role-based (e.g., data-testid='add-to-cart-button')."
+  },
+  "instructions_to_main_agent": [
+    "Use pure HTML/Tailwind for storefront layouts to ensure absolute creative freedom. Do not wrap everything in generic Card components.",
+    "Integrate Shadcn primitives (Sheet, Dialog, Form, Input, Table) for logic-heavy parts like Cart, Checkout, and Admin.",
+    "Strictly adhere to the provided color palette: #0F3D3E (Primary), #C9A063 (Secondary), #F8F4EC (Background), #A8C3A0 (Accent).",
+    "All copy MUST be in French.",
+    "Implement the piece/kilo weight selector logic dynamically. Updating the selection must adjust the price displayed and passed to the cart.",
+    "Stripe checkout must be fully functional.",
+    "Use lucide-react for icons.",
+    "Never use placeholder images; use the provided media_urls. If products lack images, fallback to the category or hero image.",
+    "Admin UI should be functional, dense, and clean. Differentiate it visually from the storefront by using standard grid structures and #FFFFFF card backgrounds."
+  ]
+}
