@@ -1,89 +1,544 @@
-from fastapi import FastAPI, APIRouter
 from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List
-import uuid
-from datetime import datetime, timezone
-
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
+from fastapi import FastAPI, APIRouter, Request, HTTPException, Depends
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+import os
+import logging
+import uuid
+from datetime import datetime, timezone, timedelta
+from pydantic import BaseModel, Field
+from typing import List, Optional
+import bcrypt
+import jwt
+
+from emergentintegrations.payments.stripe.checkout import (
+    StripeCheckout, CheckoutSessionRequest
+)
+
+# MongoDB
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app without a prefix
 app = FastAPI()
-
-# Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
-
-
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-class StatusCheckCreate(BaseModel):
-    client_name: str
-
-# Add your routes to the router instead of directly to app
-@api_router.get("/")
-async def root():
-    return {"message": "Hello World"}
-
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
-
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
-
-# Include the router in the main app
-app.include_router(api_router)
 
 app.add_middleware(
     CORSMiddleware,
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# ==================== AUTH HELPERS ====================
+
+JWT_SECRET = os.environ["JWT_SECRET"]
+JWT_ALGORITHM = "HS256"
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+
+
+def create_access_token(user_id: str, email: str) -> str:
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "exp": datetime.now(timezone.utc) + timedelta(hours=24),
+        "type": "access"
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def get_current_user(request: Request) -> dict:
+    auth_header = request.headers.get("Authorization", "")
+    token = None
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Non authentifie")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="Token invalide")
+        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
+        if not user:
+            raise HTTPException(status_code=401, detail="Utilisateur non trouve")
+        return {"id": user["id"], "email": user["email"], "name": user["name"], "role": user["role"]}
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expire")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token invalide")
+
+
+# ==================== MODELS ====================
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class ProductCreate(BaseModel):
+    name: str
+    price: float
+    category: str
+    subcategory: str
+    unit: str = "kg"
+    image_url: str = ""
+    can_piece: bool = False
+    piece_weight: float = 0.0
+    is_active: bool = True
+
+
+class ProductUpdate(BaseModel):
+    name: Optional[str] = None
+    price: Optional[float] = None
+    category: Optional[str] = None
+    subcategory: Optional[str] = None
+    unit: Optional[str] = None
+    image_url: Optional[str] = None
+    can_piece: Optional[bool] = None
+    piece_weight: Optional[float] = None
+    is_active: Optional[bool] = None
+
+
+class OrderItemCreate(BaseModel):
+    product_id: str
+    product_name: str
+    quantity: float
+    mode: str
+    item_note: str = ""
+    line_total: float
+
+
+class OrderCreate(BaseModel):
+    customer_name: str
+    customer_phone: str
+    customer_address: str = ""
+    delivery_method: str = "livraison"
+    payment_method: str = "especes"
+    global_comment: str = ""
+    total_amount: float
+    items: List[OrderItemCreate]
+
+
+class CreateSessionRequest(BaseModel):
+    order_id: str
+    origin_url: str
+
+
+class StatusUpdateRequest(BaseModel):
+    status: str
+
+
+# ==================== AUTH ENDPOINTS ====================
+
+@api_router.post("/auth/login")
+async def login(body: LoginRequest):
+    user = await db.users.find_one({"email": body.username}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="Identifiants incorrects")
+    if not verify_password(body.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Identifiants incorrects")
+    token = create_access_token(user["id"], user["email"])
+    return {
+        "token": token,
+        "user": {"id": user["id"], "email": user["email"], "name": user["name"], "role": user["role"]}
+    }
+
+
+@api_router.get("/auth/me")
+async def get_me(user=Depends(get_current_user)):
+    return user
+
+
+# ==================== PRODUCT ENDPOINTS ====================
+
+@api_router.get("/products")
+async def list_products():
+    products = await db.products.find({"is_active": True}, {"_id": 0}).to_list(1000)
+    return products
+
+
+@api_router.get("/products/all")
+async def list_all_products(user=Depends(get_current_user)):
+    products = await db.products.find({}, {"_id": 0}).to_list(1000)
+    return products
+
+
+@api_router.post("/products")
+async def create_product(body: ProductCreate, user=Depends(get_current_user)):
+    doc = body.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    await db.products.insert_one(doc)
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+@api_router.put("/products/{product_id}")
+async def update_product(product_id: str, body: ProductUpdate, user=Depends(get_current_user)):
+    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not update_data:
+        raise HTTPException(400, "Aucun champ a mettre a jour")
+    result = await db.products.update_one({"id": product_id}, {"$set": update_data})
+    if result.matched_count == 0:
+        raise HTTPException(404, "Produit non trouve")
+    product = await db.products.find_one({"id": product_id}, {"_id": 0})
+    return product
+
+
+@api_router.delete("/products/{product_id}")
+async def delete_product(product_id: str, user=Depends(get_current_user)):
+    result = await db.products.delete_one({"id": product_id})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "Produit non trouve")
+    return {"message": "Produit supprime"}
+
+
+# ==================== ORDER ENDPOINTS ====================
+
+@api_router.post("/orders")
+async def create_order(body: OrderCreate):
+    order_id = str(uuid.uuid4())
+    order = {
+        "id": order_id,
+        "customer_name": body.customer_name,
+        "customer_phone": body.customer_phone,
+        "customer_address": body.customer_address,
+        "delivery_method": body.delivery_method,
+        "payment_method": body.payment_method,
+        "global_comment": body.global_comment,
+        "total_amount": body.total_amount,
+        "status": "pending_payment" if body.payment_method == "cb" else "pending",
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.orders.insert_one(order)
+
+    for item in body.items:
+        order_item = {
+            "id": str(uuid.uuid4()),
+            "order_id": order_id,
+            "product_id": item.product_id,
+            "product_name": item.product_name,
+            "quantity": item.quantity,
+            "mode": item.mode,
+            "item_note": item.item_note,
+            "line_total": item.line_total
+        }
+        await db.order_items.insert_one(order_item)
+
+    return {k: v for k, v in order.items() if k != "_id"}
+
+
+@api_router.get("/orders")
+async def list_orders(user=Depends(get_current_user)):
+    orders = await db.orders.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return orders
+
+
+@api_router.get("/orders/{order_id}")
+async def get_order(order_id: str, user=Depends(get_current_user)):
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(404, "Commande non trouvee")
+    items = await db.order_items.find({"order_id": order_id}, {"_id": 0}).to_list(100)
+    order["items"] = items
+    return order
+
+
+@api_router.put("/orders/{order_id}/status")
+async def update_order_status(order_id: str, body: StatusUpdateRequest, user=Depends(get_current_user)):
+    valid_statuses = ["pending", "processing", "ready", "delivered", "cancelled"]
+    if body.status not in valid_statuses:
+        raise HTTPException(400, f"Statut invalide. Doit etre: {valid_statuses}")
+    result = await db.orders.update_one({"id": order_id}, {"$set": {"status": body.status}})
+    if result.matched_count == 0:
+        raise HTTPException(404, "Commande non trouvee")
+    return {"message": "Statut mis a jour", "status": body.status}
+
+
+# ==================== STRIPE ENDPOINTS ====================
+
+@api_router.post("/checkout/create-session")
+async def create_checkout(body: CreateSessionRequest, request: Request):
+    order = await db.orders.find_one({"id": body.order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(404, "Commande non trouvee")
+
+    amount = float(order["total_amount"])
+    success_url = f"{body.origin_url}/checkout/success?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{body.origin_url}/boutique"
+
+    host_url = str(request.base_url)
+    webhook_url = f"{host_url}api/webhook/stripe"
+
+    stripe_checkout = StripeCheckout(
+        api_key=os.environ["STRIPE_API_KEY"],
+        webhook_url=webhook_url
+    )
+
+    checkout_request = CheckoutSessionRequest(
+        amount=amount,
+        currency="eur",
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata={"order_id": body.order_id}
+    )
+
+    session = await stripe_checkout.create_checkout_session(checkout_request)
+
+    await db.payment_transactions.insert_one({
+        "id": str(uuid.uuid4()),
+        "order_id": body.order_id,
+        "session_id": session.session_id,
+        "amount": amount,
+        "currency": "eur",
+        "payment_status": "initiated",
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+
+    await db.orders.update_one(
+        {"id": body.order_id},
+        {"$set": {"stripe_session_id": session.session_id}}
+    )
+
+    return {"url": session.url, "session_id": session.session_id}
+
+
+@api_router.get("/checkout/status/{session_id}")
+async def checkout_status(session_id: str, request: Request):
+    transaction = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if not transaction:
+        raise HTTPException(404, "Transaction non trouvee")
+
+    if transaction.get("payment_status") == "paid":
+        return {"payment_status": "paid", "status": "complete", "order_id": transaction.get("order_id")}
+
+    host_url = str(request.base_url)
+    webhook_url = f"{host_url}api/webhook/stripe"
+
+    stripe_checkout = StripeCheckout(
+        api_key=os.environ["STRIPE_API_KEY"],
+        webhook_url=webhook_url
+    )
+
+    try:
+        status_response = await stripe_checkout.get_checkout_status(session_id)
+        new_status = status_response.payment_status
+
+        await db.payment_transactions.update_one(
+            {"session_id": session_id},
+            {"$set": {"payment_status": new_status, "status": status_response.status}}
+        )
+
+        if new_status == "paid" and transaction.get("payment_status") != "paid":
+            await db.orders.update_one(
+                {"id": transaction["order_id"]},
+                {"$set": {"status": "pending"}}
+            )
+
+        return {"payment_status": new_status, "status": status_response.status, "order_id": transaction.get("order_id")}
+    except Exception as e:
+        logger.error(f"Stripe status error: {e}")
+        return {"payment_status": transaction.get("payment_status", "unknown"), "status": "error", "order_id": transaction.get("order_id")}
+
+
+@api_router.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    body = await request.body()
+    signature = request.headers.get("Stripe-Signature", "")
+    host_url = str(request.base_url)
+    webhook_url = f"{host_url}api/webhook/stripe"
+
+    try:
+        stripe_checkout = StripeCheckout(api_key=os.environ["STRIPE_API_KEY"], webhook_url=webhook_url)
+        webhook_response = await stripe_checkout.handle_webhook(body, signature)
+
+        if webhook_response.payment_status == "paid":
+            await db.payment_transactions.update_one(
+                {"session_id": webhook_response.session_id},
+                {"$set": {"payment_status": "paid", "status": "complete"}}
+            )
+            order_id = webhook_response.metadata.get("order_id")
+            if order_id:
+                await db.orders.update_one({"id": order_id}, {"$set": {"status": "pending"}})
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return {"status": "error"}
+
+
+# ==================== SEED DATA ====================
+
+SEED_PRODUCTS = [
+    # PANIERS
+    {"name": "Panier Famille", "price": 29.90, "category": "paniers", "subcategory": "Nos Paniers", "unit": "piece", "image_url": "https://images.pexels.com/photos/1132047/pexels-photo-1132047.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Panier Solo", "price": 14.90, "category": "paniers", "subcategory": "Nos Paniers", "unit": "piece", "image_url": "https://images.pexels.com/photos/1132047/pexels-photo-1132047.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Panier Mixte Fruits & Legumes", "price": 22.90, "category": "paniers", "subcategory": "Nos Paniers", "unit": "piece", "image_url": "https://images.pexels.com/photos/1132047/pexels-photo-1132047.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    # FRUITS - Pommes
+    {"name": "Pomme Gala", "price": 2.50, "category": "fruits", "subcategory": "Les Pommes", "unit": "kg", "image_url": "https://images.pexels.com/photos/102104/pexels-photo-102104.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.18, "is_active": True},
+    {"name": "Pomme Golden", "price": 2.30, "category": "fruits", "subcategory": "Les Pommes", "unit": "kg", "image_url": "https://images.pexels.com/photos/102104/pexels-photo-102104.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.20, "is_active": True},
+    {"name": "Pomme Granny Smith", "price": 2.60, "category": "fruits", "subcategory": "Les Pommes", "unit": "kg", "image_url": "https://images.pexels.com/photos/102104/pexels-photo-102104.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.19, "is_active": True},
+    {"name": "Pomme Fuji", "price": 2.80, "category": "fruits", "subcategory": "Les Pommes", "unit": "kg", "image_url": "https://images.pexels.com/photos/102104/pexels-photo-102104.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.22, "is_active": True},
+    # FRUITS - Poires
+    {"name": "Poire Conference", "price": 3.20, "category": "fruits", "subcategory": "Les Poires", "unit": "kg", "image_url": "https://images.pexels.com/photos/568471/pexels-photo-568471.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.20, "is_active": True},
+    {"name": "Poire Williams", "price": 3.50, "category": "fruits", "subcategory": "Les Poires", "unit": "kg", "image_url": "https://images.pexels.com/photos/568471/pexels-photo-568471.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.22, "is_active": True},
+    {"name": "Poire Comice", "price": 3.80, "category": "fruits", "subcategory": "Les Poires", "unit": "kg", "image_url": "https://images.pexels.com/photos/568471/pexels-photo-568471.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.25, "is_active": True},
+    # FRUITS - Agrumes
+    {"name": "Orange Navel", "price": 2.50, "category": "fruits", "subcategory": "Les Agrumes", "unit": "kg", "image_url": "https://images.pexels.com/photos/2611810/pexels-photo-2611810.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.25, "is_active": True},
+    {"name": "Citron Jaune", "price": 2.80, "category": "fruits", "subcategory": "Les Agrumes", "unit": "kg", "image_url": "https://images.pexels.com/photos/1414110/pexels-photo-1414110.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.12, "is_active": True},
+    {"name": "Clementine", "price": 3.50, "category": "fruits", "subcategory": "Les Agrumes", "unit": "kg", "image_url": "https://images.pexels.com/photos/2090902/pexels-photo-2090902.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.08, "is_active": True},
+    {"name": "Pamplemousse Rose", "price": 2.20, "category": "fruits", "subcategory": "Les Agrumes", "unit": "kg", "image_url": "https://images.pexels.com/photos/1435742/pexels-photo-1435742.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.35, "is_active": True},
+    # FRUITS - Exotiques
+    {"name": "Mangue", "price": 3.50, "category": "fruits", "subcategory": "Fruits Exotiques", "unit": "piece", "image_url": "https://images.pexels.com/photos/918643/pexels-photo-918643.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Ananas", "price": 2.90, "category": "fruits", "subcategory": "Fruits Exotiques", "unit": "piece", "image_url": "https://images.pexels.com/photos/1071878/pexels-photo-1071878.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Banane", "price": 1.95, "category": "fruits", "subcategory": "Fruits Exotiques", "unit": "kg", "image_url": "https://images.pexels.com/photos/2294471/pexels-photo-2294471.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.15, "is_active": True},
+    {"name": "Avocat", "price": 1.80, "category": "fruits", "subcategory": "Fruits Exotiques", "unit": "piece", "image_url": "https://images.pexels.com/photos/557659/pexels-photo-557659.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    # FRUITS - Fruits Rouges
+    {"name": "Fraise Gariguette", "price": 6.90, "category": "fruits", "subcategory": "Fruits Rouges", "unit": "barquette", "image_url": "https://images.pexels.com/photos/70746/strawberries-fruit-red-sweet-70746.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Framboise", "price": 4.50, "category": "fruits", "subcategory": "Fruits Rouges", "unit": "barquette", "image_url": "https://images.pexels.com/photos/1120970/pexels-photo-1120970.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Myrtille", "price": 4.90, "category": "fruits", "subcategory": "Fruits Rouges", "unit": "barquette", "image_url": "https://images.pexels.com/photos/1120970/pexels-photo-1120970.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    # FRUITS - Raisins
+    {"name": "Raisin Blanc Italia", "price": 3.90, "category": "fruits", "subcategory": "Raisins", "unit": "kg", "image_url": "https://images.pexels.com/photos/708777/pexels-photo-708777.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Raisin Noir Muscat", "price": 4.50, "category": "fruits", "subcategory": "Raisins", "unit": "kg", "image_url": "https://images.pexels.com/photos/708777/pexels-photo-708777.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    # LEGUMES - Salades
+    {"name": "Laitue", "price": 1.20, "category": "legumes", "subcategory": "Salades", "unit": "piece", "image_url": "https://images.pexels.com/photos/1199562/pexels-photo-1199562.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Batavia", "price": 1.30, "category": "legumes", "subcategory": "Salades", "unit": "piece", "image_url": "https://images.pexels.com/photos/1199562/pexels-photo-1199562.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Roquette", "price": 2.50, "category": "legumes", "subcategory": "Salades", "unit": "botte", "image_url": "https://images.pexels.com/photos/1199562/pexels-photo-1199562.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    # LEGUMES - Tomates
+    {"name": "Tomate Ronde", "price": 2.90, "category": "legumes", "subcategory": "Tomates", "unit": "kg", "image_url": "https://images.pexels.com/photos/533280/pexels-photo-533280.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.15, "is_active": True},
+    {"name": "Tomate Coeur de Boeuf", "price": 4.50, "category": "legumes", "subcategory": "Tomates", "unit": "kg", "image_url": "https://images.pexels.com/photos/533280/pexels-photo-533280.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.30, "is_active": True},
+    {"name": "Tomate Grappe", "price": 3.20, "category": "legumes", "subcategory": "Tomates", "unit": "kg", "image_url": "https://images.pexels.com/photos/533280/pexels-photo-533280.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Tomate Cerise", "price": 4.90, "category": "legumes", "subcategory": "Tomates", "unit": "barquette", "image_url": "https://images.pexels.com/photos/533280/pexels-photo-533280.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    # LEGUMES - Racines
+    {"name": "Carotte", "price": 1.90, "category": "legumes", "subcategory": "Racines & Navets", "unit": "kg", "image_url": "https://images.pexels.com/photos/143133/pexels-photo-143133.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Navet", "price": 2.20, "category": "legumes", "subcategory": "Racines & Navets", "unit": "kg", "image_url": "https://images.pexels.com/photos/244393/pexels-photo-244393.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Betterave", "price": 2.50, "category": "legumes", "subcategory": "Racines & Navets", "unit": "kg", "image_url": "https://images.pexels.com/photos/244393/pexels-photo-244393.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.25, "is_active": True},
+    # LEGUMES - Pommes de Terre
+    {"name": "Pomme de Terre Charlotte", "price": 2.20, "category": "legumes", "subcategory": "Pommes de Terre", "unit": "kg", "image_url": "https://images.pexels.com/photos/144248/pexels-photo-144248.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Pomme de Terre Grenaille", "price": 3.50, "category": "legumes", "subcategory": "Pommes de Terre", "unit": "kg", "image_url": "https://images.pexels.com/photos/144248/pexels-photo-144248.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Pomme de Terre Bintje", "price": 1.90, "category": "legumes", "subcategory": "Pommes de Terre", "unit": "kg", "image_url": "https://images.pexels.com/photos/144248/pexels-photo-144248.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    # LEGUMES - Poivrons & Aubergines
+    {"name": "Poivron Rouge", "price": 3.90, "category": "legumes", "subcategory": "Poivrons & Aubergines", "unit": "kg", "image_url": "https://images.pexels.com/photos/1435904/pexels-photo-1435904.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.20, "is_active": True},
+    {"name": "Poivron Vert", "price": 2.90, "category": "legumes", "subcategory": "Poivrons & Aubergines", "unit": "kg", "image_url": "https://images.pexels.com/photos/1435904/pexels-photo-1435904.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.18, "is_active": True},
+    {"name": "Aubergine", "price": 2.50, "category": "legumes", "subcategory": "Poivrons & Aubergines", "unit": "kg", "image_url": "https://images.pexels.com/photos/321551/pexels-photo-321551.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.30, "is_active": True},
+    # LEGUMES - Choux
+    {"name": "Brocoli", "price": 2.90, "category": "legumes", "subcategory": "Choux & Brocolis", "unit": "kg", "image_url": "https://images.pexels.com/photos/47347/broccoli-vegetable-food-healthy-47347.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.40, "is_active": True},
+    {"name": "Chou-Fleur", "price": 2.50, "category": "legumes", "subcategory": "Choux & Brocolis", "unit": "piece", "image_url": "https://images.pexels.com/photos/47347/broccoli-vegetable-food-healthy-47347.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    # LEGUMES - Aulx Oignons
+    {"name": "Oignon Jaune", "price": 1.50, "category": "legumes", "subcategory": "Aulx, Oignons & Echalotes", "unit": "kg", "image_url": "https://images.pexels.com/photos/4197444/pexels-photo-4197444.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Ail Rose", "price": 12.00, "category": "legumes", "subcategory": "Aulx, Oignons & Echalotes", "unit": "kg", "image_url": "https://images.pexels.com/photos/4197444/pexels-photo-4197444.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": True, "piece_weight": 0.05, "is_active": True},
+    {"name": "Echalote", "price": 4.50, "category": "legumes", "subcategory": "Aulx, Oignons & Echalotes", "unit": "kg", "image_url": "https://images.pexels.com/photos/4197444/pexels-photo-4197444.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    # LEGUMES - Champignons
+    {"name": "Champignon de Paris", "price": 3.90, "category": "legumes", "subcategory": "Champignons", "unit": "kg", "image_url": "https://images.pexels.com/photos/1391487/pexels-photo-1391487.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Pleurote", "price": 8.90, "category": "legumes", "subcategory": "Champignons", "unit": "kg", "image_url": "https://images.pexels.com/photos/1391487/pexels-photo-1391487.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    # HERBES
+    {"name": "Persil Plat", "price": 1.20, "category": "herbes", "subcategory": "Herbes Fraiches", "unit": "botte", "image_url": "https://images.pexels.com/photos/2802527/pexels-photo-2802527.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Ciboulette", "price": 1.50, "category": "herbes", "subcategory": "Herbes Fraiches", "unit": "botte", "image_url": "https://images.pexels.com/photos/2802527/pexels-photo-2802527.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Basilic", "price": 2.00, "category": "herbes", "subcategory": "Herbes Fraiches", "unit": "botte", "image_url": "https://images.pexels.com/photos/2802527/pexels-photo-2802527.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Menthe Fraiche", "price": 1.50, "category": "herbes", "subcategory": "Herbes Fraiches", "unit": "botte", "image_url": "https://images.pexels.com/photos/2802527/pexels-photo-2802527.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Thym", "price": 1.50, "category": "herbes", "subcategory": "Herbes Fraiches", "unit": "botte", "image_url": "https://images.pexels.com/photos/2802527/pexels-photo-2802527.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Romarin", "price": 1.50, "category": "herbes", "subcategory": "Herbes Fraiches", "unit": "botte", "image_url": "https://images.pexels.com/photos/2802527/pexels-photo-2802527.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    # EPICERIE
+    {"name": "Noix", "price": 9.90, "category": "epicerie", "subcategory": "Fruits Secs & Epicerie", "unit": "kg", "image_url": "https://images.pexels.com/photos/129557/pexels-photo-129557.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Amandes", "price": 12.50, "category": "epicerie", "subcategory": "Fruits Secs & Epicerie", "unit": "kg", "image_url": "https://images.pexels.com/photos/129557/pexels-photo-129557.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+    {"name": "Noisettes", "price": 11.00, "category": "epicerie", "subcategory": "Fruits Secs & Epicerie", "unit": "kg", "image_url": "https://images.pexels.com/photos/129557/pexels-photo-129557.jpeg?auto=compress&cs=tinysrgb&w=400", "can_piece": False, "piece_weight": 0, "is_active": True},
+]
+
+SUBCATEGORY_IMAGES = {
+    "Nos Paniers": "https://images.pexels.com/photos/1132047/pexels-photo-1132047.jpeg?auto=compress&cs=tinysrgb&w=600",
+    "Les Pommes": "https://images.pexels.com/photos/102104/pexels-photo-102104.jpeg?auto=compress&cs=tinysrgb&w=600",
+    "Les Poires": "https://images.pexels.com/photos/568471/pexels-photo-568471.jpeg?auto=compress&cs=tinysrgb&w=600",
+    "Les Agrumes": "https://images.pexels.com/photos/2611810/pexels-photo-2611810.jpeg?auto=compress&cs=tinysrgb&w=600",
+    "Fruits Exotiques": "https://images.pexels.com/photos/2294471/pexels-photo-2294471.jpeg?auto=compress&cs=tinysrgb&w=600",
+    "Fruits Rouges": "https://images.pexels.com/photos/70746/strawberries-fruit-red-sweet-70746.jpeg?auto=compress&cs=tinysrgb&w=600",
+    "Raisins": "https://images.pexels.com/photos/708777/pexels-photo-708777.jpeg?auto=compress&cs=tinysrgb&w=600",
+    "Salades": "https://images.pexels.com/photos/1199562/pexels-photo-1199562.jpeg?auto=compress&cs=tinysrgb&w=600",
+    "Tomates": "https://images.pexels.com/photos/533280/pexels-photo-533280.jpeg?auto=compress&cs=tinysrgb&w=600",
+    "Racines & Navets": "https://images.pexels.com/photos/244393/pexels-photo-244393.jpeg?auto=compress&cs=tinysrgb&w=600",
+    "Pommes de Terre": "https://images.pexels.com/photos/144248/pexels-photo-144248.jpeg?auto=compress&cs=tinysrgb&w=600",
+    "Poivrons & Aubergines": "https://images.pexels.com/photos/1435904/pexels-photo-1435904.jpeg?auto=compress&cs=tinysrgb&w=600",
+    "Choux & Brocolis": "https://images.pexels.com/photos/47347/broccoli-vegetable-food-healthy-47347.jpeg?auto=compress&cs=tinysrgb&w=600",
+    "Aulx, Oignons & Echalotes": "https://images.pexels.com/photos/4197444/pexels-photo-4197444.jpeg?auto=compress&cs=tinysrgb&w=600",
+    "Champignons": "https://images.pexels.com/photos/1391487/pexels-photo-1391487.jpeg?auto=compress&cs=tinysrgb&w=600",
+    "Herbes Fraiches": "https://images.pexels.com/photos/2802527/pexels-photo-2802527.jpeg?auto=compress&cs=tinysrgb&w=600",
+    "Fruits Secs & Epicerie": "https://images.pexels.com/photos/129557/pexels-photo-129557.jpeg?auto=compress&cs=tinysrgb&w=600",
+}
+
+
+@api_router.get("/subcategory-images")
+async def get_subcategory_images():
+    return SUBCATEGORY_IMAGES
+
+
+async def seed_admin():
+    admin_email = os.environ.get("ADMIN_EMAIL", "ishaqRR")
+    admin_password = os.environ.get("ADMIN_PASSWORD", "Boudal@2026!Secure")
+    existing = await db.users.find_one({"email": admin_email})
+    if not existing:
+        await db.users.insert_one({
+            "id": str(uuid.uuid4()),
+            "email": admin_email,
+            "password_hash": hash_password(admin_password),
+            "name": "Admin BOUDAL",
+            "role": "admin",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+        logger.info(f"Admin seeded: {admin_email}")
+    elif not verify_password(admin_password, existing["password_hash"]):
+        await db.users.update_one(
+            {"email": admin_email},
+            {"$set": {"password_hash": hash_password(admin_password)}}
+        )
+        logger.info("Admin password updated")
+
+
+async def seed_products():
+    count = await db.products.count_documents({})
+    if count == 0:
+        for p in SEED_PRODUCTS:
+            p["id"] = str(uuid.uuid4())
+            p["created_at"] = datetime.now(timezone.utc).isoformat()
+        await db.products.insert_many(SEED_PRODUCTS)
+        logger.info(f"Seeded {len(SEED_PRODUCTS)} products")
+
+
+@app.on_event("startup")
+async def startup():
+    await db.users.create_index("email", unique=True)
+    await db.products.create_index("category")
+    await db.orders.create_index("created_at")
+    await seed_admin()
+    await seed_products()
+
+    os.makedirs("/app/memory", exist_ok=True)
+    with open("/app/memory/test_credentials.md", "w") as f:
+        f.write("# Test Credentials\n\n")
+        f.write("## Admin\n")
+        f.write(f"- Username: {os.environ.get('ADMIN_EMAIL', 'ishaqRR')}\n")
+        f.write(f"- Password: {os.environ.get('ADMIN_PASSWORD', 'Boudal@2026!Secure')}\n")
+        f.write("- Role: admin\n\n")
+        f.write("## Auth Endpoints\n")
+        f.write("- POST /api/auth/login (body: {username, password})\n")
+        f.write("- GET /api/auth/me (Bearer token)\n")
+
+
+app.include_router(api_router)
+
+
 @app.on_event("shutdown")
-async def shutdown_db_client():
+async def shutdown():
     client.close()
