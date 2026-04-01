@@ -10,11 +10,14 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 import uuid
+import csv
+import io
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import bcrypt
 import jwt
+from fastapi.responses import StreamingResponse
 
 from emergentintegrations.payments.stripe.checkout import (
     StripeCheckout, CheckoutSessionRequest
@@ -104,6 +107,10 @@ class ProductCreate(BaseModel):
     can_piece: bool = False
     piece_weight: float = 0.0
     is_active: bool = True
+    stock_quantity: int = -1
+    low_stock_threshold: int = 5
+    discount_percentage: float = 0.0
+    discount_label: str = ""
 
 
 class ProductUpdate(BaseModel):
@@ -116,6 +123,10 @@ class ProductUpdate(BaseModel):
     can_piece: Optional[bool] = None
     piece_weight: Optional[float] = None
     is_active: Optional[bool] = None
+    stock_quantity: Optional[int] = None
+    low_stock_threshold: Optional[int] = None
+    discount_percentage: Optional[float] = None
+    discount_label: Optional[str] = None
 
 
 class OrderItemCreate(BaseModel):
@@ -270,7 +281,10 @@ async def get_me(user=Depends(get_current_user)):
 
 @api_router.get("/products")
 async def list_products():
-    products = await db.products.find({"is_active": True}, {"_id": 0}).to_list(1000)
+    products = await db.products.find(
+        {"is_active": True},
+        {"_id": 0}
+    ).to_list(1000)
     return products
 
 
@@ -344,6 +358,15 @@ async def create_order(body: OrderCreate, background_tasks: BackgroundTasks):
         await db.order_items.insert_one(order_item)
         items_data.append(order_item)
 
+        # Decrement stock
+        product = await db.products.find_one({"id": item.product_id}, {"_id": 0})
+        if product and product.get("stock_quantity", -1) > 0:
+            new_stock = max(0, product["stock_quantity"] - int(item.quantity if item.mode == "piece" else 1))
+            update_fields = {"stock_quantity": new_stock}
+            if new_stock == 0:
+                update_fields["is_active"] = False
+            await db.products.update_one({"id": item.product_id}, {"$set": update_fields})
+
     clean_order = {k: v for k, v in order.items() if k != "_id"}
     background_tasks.add_task(send_order_emails, clean_order, items_data)
 
@@ -351,8 +374,17 @@ async def create_order(body: OrderCreate, background_tasks: BackgroundTasks):
 
 
 @api_router.get("/orders")
-async def list_orders(user=Depends(get_current_user)):
-    orders = await db.orders.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+async def list_orders(user=Depends(get_current_user), search: str = "", status: str = ""):
+    query = {}
+    if status:
+        query["status"] = status
+    if search:
+        query["$or"] = [
+            {"customer_name": {"$regex": search, "$options": "i"}},
+            {"customer_phone": {"$regex": search, "$options": "i"}},
+            {"customer_email": {"$regex": search, "$options": "i"}},
+        ]
+    orders = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return orders
 
 
@@ -375,6 +407,117 @@ async def update_order_status(order_id: str, body: StatusUpdateRequest, user=Dep
     if result.matched_count == 0:
         raise HTTPException(404, "Commande non trouvee")
     return {"message": "Statut mis a jour", "status": body.status}
+
+
+# ==================== ORDER TRACKING (PUBLIC) ====================
+
+@api_router.get("/orders/track/{order_id}")
+async def track_order(order_id: str):
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0, "global_comment": 0})
+    if not order:
+        raise HTTPException(404, "Commande non trouvee")
+    items = await db.order_items.find({"order_id": order_id}, {"_id": 0}).to_list(100)
+    order["items"] = items
+    return order
+
+
+# ==================== ADMIN STATS ====================
+
+@api_router.get("/admin/stats")
+async def admin_stats(user=Depends(get_current_user)):
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+    all_orders = await db.orders.find({}, {"_id": 0}).to_list(10000)
+
+    def sum_orders(orders, since):
+        return sum(o.get("total_amount", 0) for o in orders if o.get("created_at", "") >= since and o.get("status") not in ["cancelled", "pending_payment"])
+
+    def count_orders(orders, since):
+        return len([o for o in orders if o.get("created_at", "") >= since and o.get("status") not in ["cancelled", "pending_payment"]])
+
+    ca_today = sum_orders(all_orders, today_start)
+    ca_week = sum_orders(all_orders, week_start)
+    ca_month = sum_orders(all_orders, month_start)
+    orders_today = count_orders(all_orders, today_start)
+    orders_week = count_orders(all_orders, week_start)
+    orders_month = count_orders(all_orders, month_start)
+
+    status_counts = {}
+    for o in all_orders:
+        s = o.get("status", "unknown")
+        status_counts[s] = status_counts.get(s, 0) + 1
+
+    # Top products
+    all_items = await db.order_items.find({}, {"_id": 0}).to_list(10000)
+    product_revenue = {}
+    product_qty = {}
+    for item in all_items:
+        name = item.get("product_name", "")
+        product_revenue[name] = product_revenue.get(name, 0) + item.get("line_total", 0)
+        product_qty[name] = product_qty.get(name, 0) + item.get("quantity", 0)
+    top_products = sorted(product_revenue.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    # Low stock products
+    low_stock = await db.products.find(
+        {"stock_quantity": {"$gte": 0, "$lte": 5}},
+        {"_id": 0, "name": 1, "stock_quantity": 1, "low_stock_threshold": 1}
+    ).to_list(50)
+
+    return {
+        "ca_today": round(ca_today, 2),
+        "ca_week": round(ca_week, 2),
+        "ca_month": round(ca_month, 2),
+        "orders_today": orders_today,
+        "orders_week": orders_week,
+        "orders_month": orders_month,
+        "status_counts": status_counts,
+        "top_products": [{"name": n, "revenue": round(r, 2)} for n, r in top_products],
+        "low_stock": low_stock,
+        "total_products": await db.products.count_documents({}),
+        "active_products": await db.products.count_documents({"is_active": True}),
+    }
+
+
+# ==================== ADMIN EXPORT ====================
+
+@api_router.get("/admin/export-orders")
+async def export_orders(user=Depends(get_current_user)):
+    orders = await db.orders.find({}, {"_id": 0}).sort("created_at", -1).to_list(10000)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Date", "Client", "Telephone", "Email", "Adresse", "Livraison", "Paiement", "Total", "Statut"])
+    for o in orders:
+        writer.writerow([
+            o.get("created_at", "")[:16],
+            o.get("customer_name", ""),
+            o.get("customer_phone", ""),
+            o.get("customer_email", ""),
+            o.get("customer_address", ""),
+            o.get("delivery_method", ""),
+            o.get("payment_method", ""),
+            f"{o.get('total_amount', 0):.2f}",
+            o.get("status", ""),
+        ])
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=commandes_{datetime.now().strftime('%Y%m%d')}.csv"}
+    )
+
+
+# ==================== ACTIVE PROMOTIONS ====================
+
+@api_router.get("/promotions")
+async def get_active_promotions():
+    promos = await db.products.find(
+        {"is_active": True, "discount_percentage": {"$gt": 0}},
+        {"_id": 0}
+    ).to_list(100)
+    return promos
 
 
 # ==================== STRIPE ENDPOINTS ====================
@@ -619,8 +762,57 @@ async def seed_products():
         for p in SEED_PRODUCTS:
             p["id"] = str(uuid.uuid4())
             p["created_at"] = datetime.now(timezone.utc).isoformat()
+            p.setdefault("stock_quantity", -1)
+            p.setdefault("low_stock_threshold", 5)
+            p.setdefault("discount_percentage", 0.0)
+            p.setdefault("discount_label", "")
         await db.products.insert_many(SEED_PRODUCTS)
         logger.info(f"Seeded {len(SEED_PRODUCTS)} products")
+
+
+PRODUCT_IMAGE_MAP = {
+    "Pomme Gala": "https://images.unsplash.com/photo-1560806887-1e4cd0b6cbd6?w=400",
+    "Pomme Golden": "https://images.unsplash.com/photo-1619546813926-a78fa6372cd2?w=400",
+    "Pomme Granny Smith": "https://images.unsplash.com/photo-1584306670957-acf935f5033c?w=400",
+    "Pomme Fuji": "https://images.unsplash.com/photo-1570913149827-d2ac84ab3f9a?w=400",
+    "Poire Conference": "https://images.unsplash.com/photo-1514756331096-242fdeb70d4a?w=400",
+    "Poire Williams": "https://images.unsplash.com/photo-1615484477778-ca3b77940c25?w=400",
+    "Orange Navel": "https://images.unsplash.com/photo-1547514701-42782101795e?w=400",
+    "Citron Jaune": "https://images.unsplash.com/photo-1590502593747-42a996133562?w=400",
+    "Clementine": "https://images.unsplash.com/photo-1611080626919-7cf5a9dbab5b?w=400",
+    "Mangue": "https://images.unsplash.com/photo-1553279768-865429fa0078?w=400",
+    "Ananas": "https://images.unsplash.com/photo-1550258987-190a2d41a8ba?w=400",
+    "Banane": "https://images.unsplash.com/photo-1571771894821-ce9b6c11b08e?w=400",
+    "Avocat": "https://images.unsplash.com/photo-1523049673857-eb18f1d7b578?w=400",
+    "Fraise Gariguette": "https://images.unsplash.com/photo-1464965911861-746a04b4bca6?w=400",
+    "Framboise": "https://images.unsplash.com/photo-1577069861033-55d04cec4ef5?w=400",
+    "Myrtille": "https://images.unsplash.com/photo-1498159332174-be5f8a298c4c?w=400",
+    "Tomate Ronde": "https://images.unsplash.com/photo-1546470427-0d4db154ceb8?w=400",
+    "Tomate Coeur de Boeuf": "https://images.unsplash.com/photo-1592841200221-a6898f307baa?w=400",
+    "Tomate Grappe": "https://images.unsplash.com/photo-1561136594-7f68413baa99?w=400",
+    "Carotte": "https://images.unsplash.com/photo-1598170845058-32b9d6a5da37?w=400",
+    "Poivron Rouge": "https://images.unsplash.com/photo-1563565375-f3fdfdbefa83?w=400",
+    "Aubergine": "https://images.unsplash.com/photo-1615484477778-ca3b77940c25?w=400",
+    "Brocoli": "https://images.unsplash.com/photo-1459411552884-841db9b3cc2a?w=400",
+    "Oignon Jaune": "https://images.unsplash.com/photo-1618512496248-a07fe83aa8cb?w=400",
+    "Persil Plat": "https://images.unsplash.com/photo-1506073881649-4e23be3e9ed0?w=400",
+    "Basilic": "https://images.unsplash.com/photo-1527964318766-73c5ea4c66ab?w=400",
+    "Champignon de Paris": "https://images.unsplash.com/photo-1504545102780-26774c1bb073?w=400",
+    "Laitue": "https://images.unsplash.com/photo-1622206151226-18ca2c9ab4a1?w=400",
+    "Pomme de Terre Charlotte": "https://images.unsplash.com/photo-1518977676601-b53f82ber633?w=400",
+}
+
+
+async def migrate_products():
+    """Add missing fields and update images for existing products."""
+    new_fields = {"stock_quantity": -1, "low_stock_threshold": 5, "discount_percentage": 0.0, "discount_label": ""}
+    await db.products.update_many(
+        {"stock_quantity": {"$exists": False}},
+        {"$set": new_fields}
+    )
+    for name, url in PRODUCT_IMAGE_MAP.items():
+        await db.products.update_one({"name": name}, {"$set": {"image_url": url}})
+    logger.info("Product migration complete")
 
 
 @app.on_event("startup")
@@ -630,6 +822,7 @@ async def startup():
     await db.orders.create_index("created_at")
     await seed_admin()
     await seed_products()
+    await migrate_products()
 
     os.makedirs("/app/memory", exist_ok=True)
     with open("/app/memory/test_credentials.md", "w") as f:

@@ -10,6 +10,7 @@ import BoutiquePage from "@/pages/BoutiquePage";
 import AdminLogin from "@/pages/AdminLogin";
 import AdminDashboard from "@/pages/AdminDashboard";
 import CheckoutSuccess from "@/pages/CheckoutSuccess";
+import TrackOrderPage from "@/pages/TrackOrderPage";
 
 function ProtectedRoute({ children }) {
     const { isAuthenticated, loading } = useAuth();
@@ -24,6 +25,7 @@ function AppRoutes() {
             <Route path="/" element={<><Header /><HomePage /><Footer /></>} />
             <Route path="/boutique" element={<><Header /><BoutiquePage /><Footer /></>} />
             <Route path="/checkout/success" element={<><Header /><CheckoutSuccess /><Footer /></>} />
+            <Route path="/track/:orderId" element={<><Header /><TrackOrderPage /><Footer /></>} />
             <Route path="/admin" element={<AdminLogin />} />
             <Route path="/admin/dashboard" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
         </Routes>

@@ -19,7 +19,14 @@ export default function ProductCard({ product }) {
         ? (product.price * product.piece_weight).toFixed(2)
         : product.price.toFixed(2);
 
+    const hasDiscount = product.discount_percentage > 0;
+    const discountedPrice = hasDiscount
+        ? (parseFloat(displayPrice) * (1 - product.discount_percentage / 100)).toFixed(2)
+        : displayPrice;
+
     const displayUnit = isPieceMode ? "piece" : product.unit;
+    const isOutOfStock = product.stock_quantity === 0;
+    const isLowStock = product.stock_quantity > 0 && product.stock_quantity <= (product.low_stock_threshold || 5);
 
     const adjustQty = (dir) => {
         setQuantity(prev => {
@@ -43,15 +50,37 @@ export default function ProductCard({ product }) {
                     className="w-full h-full object-cover img-zoom"
                     loading="lazy"
                 />
+                {hasDiscount && (
+                    <span className="absolute top-2 left-2 bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded-full">
+                        -{product.discount_percentage}%{product.discount_label ? ` ${product.discount_label}` : ""}
+                    </span>
+                )}
+                {isOutOfStock && (
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                        <span className="bg-white text-boudal-green font-bold text-xs px-3 py-1.5 rounded-full uppercase">Rupture</span>
+                    </div>
+                )}
+                {isLowStock && !isOutOfStock && (
+                    <span className="absolute top-2 right-2 bg-orange-500 text-white text-[10px] font-bold px-2 py-1 rounded-full">
+                        Plus que {product.stock_quantity} !
+                    </span>
+                )}
             </div>
 
             <h3 className="font-serif text-sm sm:text-base font-semibold text-boudal-green leading-tight mb-1 line-clamp-2">
                 {product.name}
             </h3>
 
-            <p className="text-sm font-medium text-boudal-gold mb-2 sm:mb-3">
-                {displayPrice}&euro; / {displayUnit}
-            </p>
+            <div className="mb-2 sm:mb-3">
+                {hasDiscount ? (
+                    <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-red-500">{discountedPrice}&euro; / {displayUnit}</span>
+                        <span className="text-xs text-gray-400 line-through">{displayPrice}&euro;</span>
+                    </div>
+                ) : (
+                    <p className="text-sm font-medium text-boudal-gold">{displayPrice}&euro; / {displayUnit}</p>
+                )}
+            </div>
 
             {canToggle && (
                 <div data-testid={`unit-toggle-${product.id}`} className="flex mb-2 sm:mb-3 rounded-full overflow-hidden border border-boudal-green">
@@ -95,9 +124,10 @@ export default function ProductCard({ product }) {
             <button
                 data-testid={`add-to-cart-${product.id}`}
                 onClick={handleAdd}
-                className="w-full bg-boudal-gold text-white py-3 text-xs sm:text-sm font-semibold uppercase tracking-wider hover:bg-boudal-gold/90 transition-colors rounded-lg active:scale-[0.97]"
+                disabled={isOutOfStock}
+                className="w-full bg-boudal-gold text-white py-3 text-xs sm:text-sm font-semibold uppercase tracking-wider hover:bg-boudal-gold/90 transition-colors rounded-lg active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed"
             >
-                Ajouter
+                {isOutOfStock ? "Indisponible" : "Ajouter"}
             </button>
         </div>
     );

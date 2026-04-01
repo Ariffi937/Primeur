@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { useCart } from "@/contexts/CartContext";
-import { Minus, Plus, Trash2, MessageSquare, Check, Loader2 } from "lucide-react";
+import { Minus, Plus, Trash2, MessageSquare, Check, Loader2, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 
@@ -10,6 +10,7 @@ export default function CartPanel({ open, onOpenChange }) {
     const [showCheckout, setShowCheckout] = useState(false);
     const [loading, setLoading] = useState(false);
     const [success, setSuccess] = useState(false);
+    const lastOrderId = useRef(null);
     const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", delivery: "livraison", payment: "especes", comment: "" });
 
     const handleSubmit = async () => {
@@ -42,6 +43,7 @@ export default function CartPanel({ open, onOpenChange }) {
                 })),
             };
             const res = await api.post("/orders", orderData);
+            lastOrderId.current = res.data.id;
 
             if (form.payment === "cb") {
                 const origin = window.location.origin;
@@ -66,14 +68,16 @@ export default function CartPanel({ open, onOpenChange }) {
     const resetAndClose = () => {
         setShowCheckout(false);
         setSuccess(false);
+        lastOrderId.current = null;
         setForm({ name: "", phone: "", email: "", address: "", delivery: "livraison", payment: "especes", comment: "" });
         onOpenChange(false);
     };
 
     if (success) {
+        const trackUrl = lastOrderId.current ? `/track/${lastOrderId.current}` : null;
         return (
             <Sheet open={open} onOpenChange={resetAndClose}>
-                <SheetContent side="right" className="w-full sm:max-w-md bg-white p-0 flex flex-col">
+                <SheetContent side="right" className="w-full sm:max-w-md bg-white p-0 flex flex-col [&>button]:top-4 [&>button]:right-4">
                     <SheetHeader className="sr-only"><SheetTitle>Confirmation</SheetTitle><SheetDescription>Votre commande</SheetDescription></SheetHeader>
                     <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
                         <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6">
@@ -81,8 +85,17 @@ export default function CartPanel({ open, onOpenChange }) {
                         </div>
                         <h2 className="font-serif text-2xl font-bold text-boudal-green mb-2">Merci !</h2>
                         <p className="text-gray-600 mb-6">Votre commande est enregistree. Nous vous contacterons rapidement.</p>
-                        <button data-testid="back-to-home-btn" onClick={resetAndClose} className="bg-boudal-green text-white py-3 px-8 font-semibold hover:bg-boudal-green/90 transition-colors">
-                            Retour
+                        {trackUrl && (
+                            <a
+                                href={trackUrl}
+                                data-testid="track-order-link"
+                                className="flex items-center gap-2 bg-boudal-green text-white py-3 px-6 font-semibold text-sm hover:bg-boudal-green/90 transition-colors rounded-lg mb-3"
+                            >
+                                <ExternalLink className="w-4 h-4" /> Suivre ma commande
+                            </a>
+                        )}
+                        <button data-testid="back-to-home-btn" onClick={resetAndClose} className="text-boudal-gold font-medium text-sm hover:underline">
+                            Retour a la boutique
                         </button>
                     </div>
                 </SheetContent>

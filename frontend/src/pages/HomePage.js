@@ -1,10 +1,16 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { ShoppingBasket, Truck, GraduationCap, UtensilsCrossed, MapPin, Phone, Clock } from "lucide-react";
+import { ShoppingBasket, Truck, GraduationCap, UtensilsCrossed, MapPin, Phone, Clock, Tag } from "lucide-react";
+import api from "@/lib/api";
 
 export default function HomePage() {
     const navigate = useNavigate();
     const location = useLocation();
+    const [promos, setPromos] = useState([]);
+
+    useEffect(() => {
+        api.get("/promotions").then(res => setPromos(res.data)).catch(() => {});
+    }, []);
 
     useEffect(() => {
         if (location.state?.scrollTo) {
@@ -56,6 +62,44 @@ export default function HomePage() {
                     </div>
                 </div>
             </section>
+
+            {/* PROMO BANNER */}
+            {promos.length > 0 && (
+                <section data-testid="promo-section" className="py-10 md:py-14 bg-boudal-green">
+                    <div className="max-w-7xl mx-auto px-6">
+                        <div className="flex items-center justify-center gap-2 mb-6">
+                            <Tag className="w-5 h-5 text-boudal-gold" />
+                            <h2 className="font-serif text-2xl md:text-3xl text-white font-bold">Promotions en cours</h2>
+                        </div>
+                        <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
+                            {promos.map(p => (
+                                <div key={p.id} className="flex-shrink-0 w-48 sm:w-56 bg-white/10 backdrop-blur rounded-xl overflow-hidden">
+                                    <div className="h-32 sm:h-40 relative">
+                                        <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
+                                        <span className="absolute top-2 left-2 bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded-full">
+                                            -{p.discount_percentage}%
+                                        </span>
+                                    </div>
+                                    <div className="p-3">
+                                        <p className="text-white font-medium text-sm truncate">{p.name}</p>
+                                        <div className="flex items-center gap-2 mt-1">
+                                            <span className="text-boudal-gold font-bold text-sm">
+                                                {(p.price * (1 - p.discount_percentage / 100)).toFixed(2)}&euro;
+                                            </span>
+                                            <span className="text-gray-400 text-xs line-through">{p.price.toFixed(2)}&euro;</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="text-center mt-6">
+                            <button onClick={() => navigate("/boutique")} className="bg-boudal-gold text-white py-2.5 px-8 font-semibold text-sm hover:bg-boudal-gold/90 transition-colors rounded-lg">
+                                Voir toutes les offres
+                            </button>
+                        </div>
+                    </div>
+                </section>
+            )}
 
             {/* HISTOIRE */}
             <section id="histoire" data-testid="histoire-section" className="py-16 md:py-24 bg-white">
