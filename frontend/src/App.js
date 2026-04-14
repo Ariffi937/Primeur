@@ -11,6 +11,7 @@ import AdminLogin from "@/pages/AdminLogin";
 import AdminDashboard from "@/pages/AdminDashboard";
 import CheckoutSuccess from "@/pages/CheckoutSuccess";
 import TrackOrderPage from "@/pages/TrackOrderPage";
+import ChatBot from "@/components/ChatBot"; // 👈 LIGNE 1
 
 function ProtectedRoute({ children }) {
     const { isAuthenticated, loading } = useAuth();
@@ -39,6 +40,7 @@ function App() {
                 <CartProvider>
                     <Toaster position="bottom-center" richColors />
                     <AppRoutes />
+                    <ChatBot /> {/* 👈 LIGNE 2 */}
                 </CartProvider>
             </AuthProvider>
         </BrowserRouter>
