@@ -18,6 +18,7 @@ from typing import List, Optional
 import bcrypt
 import jwt
 from fastapi.responses import StreamingResponse
+import anthropic
 
 from emergentintegrations.payments.stripe.checkout import (
     StripeCheckout, CheckoutSessionRequest
@@ -157,6 +158,15 @@ class CreateSessionRequest(BaseModel):
 
 class StatusUpdateRequest(BaseModel):
     status: str
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    messages: List[ChatMessage]
 
 
 # ==================== EMAIL HELPERS ====================
@@ -520,6 +530,75 @@ async def get_active_promotions():
     return promos
 
 
+# ==================== CHAT / AGENT SUPPORT CLIENT ====================
+
+@api_router.post("/chat")
+async def chat_support(body: ChatRequest):
+    """Agent support client IA pour Primeur BOUDAL."""
+
+    SYSTEM_PROMPT = """Tu es l'assistant virtuel de Primeur BOUDAL, une épicerie primeur premium située aux Halles de Nîmes.
+Tu réponds UNIQUEMENT en français, avec un ton chaleureux, professionnel et bienveillant.
+Tu es concis (3-4 phrases max par réponse sauf si on te demande plus de détails).
+
+INFORMATIONS SUR LA BOUTIQUE :
+- Nom : Primeur BOUDAL
+- Adresse : Halles de Nîmes, Avenue du Général Perrier, 30000 Nîmes
+- Téléphone : 04 66 29 52 23
+- Horaires : Lundi au Dimanche, 7h00 - 13h00
+- Histoire : Institution nîmoise depuis plus de 20 ans, sélection quotidienne des meilleurs produits
+
+PRODUITS DISPONIBLES :
+- Fruits : pommes (Gala, Golden, Granny Smith, Fuji), poires, agrumes (oranges, citrons, clémentines), fruits exotiques (mangues, ananas, bananes, avocats), fruits rouges (fraises Gariguette, framboises, myrtilles), raisins
+- Légumes : salades, tomates (rondes, cœur de bœuf, cerise, grappe), carottes, pommes de terre, poivrons, aubergines, brocolis, champignons, oignons, ail
+- Herbes fraîches : persil, ciboulette, basilic, menthe, thym, romarin
+- Épicerie : noix, amandes, noisettes
+- Paniers personnalisés : Panier Famille (29,90€), Panier Solo (14,90€), Panier Mixte (22,90€)
+
+LIVRAISON & COMMANDES :
+- Livraison à domicile sur Nîmes (commande en ligne sur le site)
+- Click & Collect aux Halles de Nîmes
+- Créneaux : Matin (9h-12h), Midi (12h-14h), Après-midi (14h-18h), Soir (18h-20h)
+- Paiement : espèces à la livraison ou carte bancaire en ligne (Stripe)
+- Pour commander : aller dans la boutique en ligne, ajouter au panier, valider la commande
+
+POLITIQUE PRODUITS :
+- Arrivage quotidien chaque matin depuis les marchés de gros et producteurs locaux
+- Produits vendus au poids (kg) ou à la pièce selon les articles
+- Certains produits ont un toggle "au poids / à la pièce"
+
+CE QUE TU NE PEUX PAS FAIRE :
+- Modifier une commande existante (rediriger vers le 04 66 29 52 23)
+- Donner les stocks en temps réel
+- Faire des réservations
+
+Si tu ne sais pas répondre, donne le numéro de téléphone : 04 66 29 52 23."""
+
+    try:
+        anthropic_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+
+        api_messages = [
+            {"role": msg.role, "content": msg.content}
+            for msg in body.messages
+            if msg.role in ("user", "assistant")
+        ]
+
+        response = anthropic_client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=512,
+            system=SYSTEM_PROMPT,
+            messages=api_messages,
+        )
+
+        return {"response": response.content[0].text}
+
+    except Exception as e:
+        logger.error(f"Chat error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Service temporairement indisponible. Contactez-nous au 04 66 29 52 23."
+        )
+
+
 # ==================== STRIPE ENDPOINTS ====================
 
 @api_router.post("/checkout/create-session")
@@ -804,7 +883,6 @@ PRODUCT_IMAGE_MAP = {
 
 
 async def migrate_products():
-    """Add missing fields and update images for existing products."""
     new_fields = {"stock_quantity": -1, "low_stock_threshold": 5, "discount_percentage": 0.0, "discount_label": ""}
     await db.products.update_many(
         {"stock_quantity": {"$exists": False}},
