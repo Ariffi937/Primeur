@@ -5,7 +5,7 @@ import api from "@/lib/api";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { LogOut, Plus, Pencil, Trash2, Eye, RefreshCw, TrendingUp, Package, Download, Search, AlertTriangle } from "lucide-react";
+import { LogOut, Plus, Pencil, Trash2, Eye, RefreshCw, TrendingUp, Download, Search, AlertTriangle, Truck } from "lucide-react";
 import { toast } from "sonner";
 
 const STATUS_OPTIONS = [
@@ -17,6 +17,13 @@ const STATUS_OPTIONS = [
     { value: "pending_payment", label: "Paiement en attente", color: "bg-orange-100 text-orange-800" },
 ];
 
+const SLOT_LABELS = {
+    matin: "Matin (9h–12h)",
+    midi: "Midi (12h–14h)",
+    aprem: "Après-midi (14h–18h)",
+    soir: "Soir (18h–20h)",
+};
+
 function getStatusBadge(status) {
     const s = STATUS_OPTIONS.find(o => o.value === status) || { label: status, color: "bg-gray-100 text-gray-700" };
     return <span className={`text-xs font-medium px-2 py-1 rounded-full ${s.color}`}>{s.label}</span>;
@@ -25,13 +32,19 @@ function getStatusBadge(status) {
 export default function AdminDashboard() {
     const { logout } = useAuth();
     const navigate = useNavigate();
+
     const [orders, setOrders] = useState([]);
     const [products, setProducts] = useState([]);
+    const [deliveries, setDeliveries] = useState({ grouped: {}, total: 0 });
     const [selectedOrder, setSelectedOrder] = useState(null);
     const [orderDetail, setOrderDetail] = useState(null);
     const [productDialog, setProductDialog] = useState(false);
     const [editingProduct, setEditingProduct] = useState(null);
-    const [productForm, setProductForm] = useState({ name: "", price: "", category: "fruits", subcategory: "", unit: "kg", image_url: "", can_piece: false, piece_weight: "0", is_active: true, stock_quantity: "-1", low_stock_threshold: "5", discount_percentage: "0", discount_label: "" });
+    const [productForm, setProductForm] = useState({
+        name: "", price: "", category: "fruits", subcategory: "", unit: "kg",
+        image_url: "", can_piece: false, piece_weight: "0", is_active: true,
+        stock_quantity: "-1", low_stock_threshold: "5", discount_percentage: "0", discount_label: ""
+    });
     const [stats, setStats] = useState(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState("");
@@ -46,6 +59,13 @@ export default function AdminDashboard() {
         } catch (err) { console.error(err); }
     }, [searchQuery, statusFilter]);
 
+    const fetchDeliveries = useCallback(async () => {
+        try {
+            const res = await api.get("/deliveries");
+            setDeliveries(res.data);
+        } catch (err) { console.error(err); }
+    }, []);
+
     const fetchProducts = useCallback(async () => {
         try {
             const res = await api.get("/products/all");
@@ -53,16 +73,25 @@ export default function AdminDashboard() {
         } catch (err) { console.error(err); }
     }, []);
 
+    const fetchStats = useCallback(async () => {
+        try {
+            const res = await api.get("/admin/stats");
+            setStats(res.data);
+        } catch (err) { console.error(err); }
+    }, []);
+
     useEffect(() => {
         fetchOrders();
         fetchProducts();
-        api.get("/admin/stats").then(r => setStats(r.data)).catch(console.error);
+        fetchDeliveries();
+        fetchStats();
         const interval = setInterval(() => {
             fetchOrders();
-            api.get("/admin/stats").then(r => setStats(r.data)).catch(() => {});
+            fetchDeliveries();
+            fetchStats();
         }, 15000);
         return () => clearInterval(interval);
-    }, [fetchOrders, fetchProducts]);
+    }, [fetchOrders, fetchProducts, fetchDeliveries, fetchStats]);
 
     useEffect(() => {
         fetchOrders();
@@ -81,6 +110,7 @@ export default function AdminDashboard() {
             await api.put(`/orders/${orderId}/status`, { status: newStatus });
             toast.success("Statut mis a jour");
             fetchOrders();
+            fetchDeliveries();
             if (orderDetail?.id === orderId) {
                 setOrderDetail(prev => ({ ...prev, status: newStatus }));
             }
@@ -93,13 +123,19 @@ export default function AdminDashboard() {
             setProductForm({
                 name: product.name, price: String(product.price), category: product.category,
                 subcategory: product.subcategory, unit: product.unit, image_url: product.image_url || "",
-                can_piece: product.can_piece, piece_weight: String(product.piece_weight || 0), is_active: product.is_active,
-                stock_quantity: String(product.stock_quantity ?? -1), low_stock_threshold: String(product.low_stock_threshold ?? 5),
-                discount_percentage: String(product.discount_percentage ?? 0), discount_label: product.discount_label || "",
+                can_piece: product.can_piece, piece_weight: String(product.piece_weight || 0),
+                is_active: product.is_active, stock_quantity: String(product.stock_quantity ?? -1),
+                low_stock_threshold: String(product.low_stock_threshold ?? 5),
+                discount_percentage: String(product.discount_percentage ?? 0),
+                discount_label: product.discount_label || "",
             });
         } else {
             setEditingProduct(null);
-            setProductForm({ name: "", price: "", category: "fruits", subcategory: "", unit: "kg", image_url: "", can_piece: false, piece_weight: "0", is_active: true, stock_quantity: "-1", low_stock_threshold: "5", discount_percentage: "0", discount_label: "" });
+            setProductForm({
+                name: "", price: "", category: "fruits", subcategory: "", unit: "kg",
+                image_url: "", can_piece: false, piece_weight: "0", is_active: true,
+                stock_quantity: "-1", low_stock_threshold: "5", discount_percentage: "0", discount_label: ""
+            });
         }
         setProductDialog(true);
     };
@@ -142,7 +178,8 @@ export default function AdminDashboard() {
 
     return (
         <div className="min-h-screen bg-boudal-ivory" data-testid="admin-dashboard">
-            {/* Header */}
+
+            {/* ── Header ─────────────────────────────────────────────── */}
             <div className="bg-boudal-green text-white px-4 md:px-8 py-4 flex items-center justify-between shadow-md">
                 <h1 className="font-serif text-lg md:text-xl font-bold">
                     Primeur <span className="text-boudal-gold italic">BOUDAL</span>
@@ -154,7 +191,8 @@ export default function AdminDashboard() {
             </div>
 
             <div className="max-w-7xl mx-auto px-4 md:px-8 py-6">
-                {/* STATS CARDS */}
+
+                {/* ── Stats ──────────────────────────────────────────────── */}
                 {stats && (
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6" data-testid="admin-stats">
                         <div className="bg-white rounded-lg p-4 border shadow-sm">
@@ -180,7 +218,7 @@ export default function AdminDashboard() {
                     </div>
                 )}
 
-                {/* LOW STOCK ALERT */}
+                {/* ── Alerte stock bas ───────────────────────────────────── */}
                 {stats?.low_stock?.length > 0 && (
                     <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-6 flex items-start gap-3" data-testid="low-stock-alert">
                         <AlertTriangle className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" />
@@ -191,10 +229,12 @@ export default function AdminDashboard() {
                     </div>
                 )}
 
-                {/* TOP PRODUCTS */}
+                {/* ── Top produits ───────────────────────────────────────── */}
                 {stats?.top_products?.length > 0 && (
                     <div className="bg-white rounded-lg p-4 border shadow-sm mb-6">
-                        <h3 className="text-sm font-semibold text-boudal-green mb-3 flex items-center gap-2"><TrendingUp className="w-4 h-4 text-boudal-gold" /> Produits les plus vendus</h3>
+                        <h3 className="text-sm font-semibold text-boudal-green mb-3 flex items-center gap-2">
+                            <TrendingUp className="w-4 h-4 text-boudal-gold" /> Produits les plus vendus
+                        </h3>
                         <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                             {stats.top_products.slice(0, 5).map((tp, i) => (
                                 <div key={i} className="text-center p-2 bg-gray-50 rounded">
@@ -206,17 +246,21 @@ export default function AdminDashboard() {
                     </div>
                 )}
 
+                {/* ── Onglets ────────────────────────────────────────────── */}
                 <Tabs defaultValue="orders">
                     <TabsList className="bg-white mb-6 border">
                         <TabsTrigger data-testid="tab-orders" value="orders" className="data-[state=active]:bg-boudal-green data-[state=active]:text-white">
                             Commandes ({orders.length})
+                        </TabsTrigger>
+                        <TabsTrigger data-testid="tab-deliveries" value="deliveries" className="data-[state=active]:bg-boudal-green data-[state=active]:text-white">
+                            Livraisons ({deliveries.total})
                         </TabsTrigger>
                         <TabsTrigger data-testid="tab-products" value="products" className="data-[state=active]:bg-boudal-green data-[state=active]:text-white">
                             Produits ({products.length})
                         </TabsTrigger>
                     </TabsList>
 
-                    {/* ORDERS TAB */}
+                    {/* ── Onglet Commandes ───────────────────────────────── */}
                     <TabsContent value="orders">
                         <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
                             <div className="p-4 flex flex-wrap items-center justify-between gap-3 border-b">
@@ -251,7 +295,7 @@ export default function AdminDashboard() {
                                                 .then(b => {
                                                     const a = document.createElement("a");
                                                     a.href = URL.createObjectURL(b);
-                                                    a.download = `commandes_${new Date().toISOString().slice(0,10)}.csv`;
+                                                    a.download = `commandes_${new Date().toISOString().slice(0, 10)}.csv`;
                                                     a.click();
                                                 })
                                                 .catch(() => toast.error("Erreur export"));
@@ -278,12 +322,14 @@ export default function AdminDashboard() {
                                 </TableHeader>
                                 <TableBody>
                                     {orders.length === 0 ? (
-                                        <TableRow><TableCell colSpan={6} className="text-center py-8 text-gray-400">Aucune commande</TableCell></TableRow>
+                                        <TableRow>
+                                            <TableCell colSpan={6} className="text-center py-8 text-gray-400">Aucune commande</TableCell>
+                                        </TableRow>
                                     ) : orders.map(o => (
                                         <TableRow key={o.id}>
                                             <TableCell className="text-xs">{new Date(o.created_at).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</TableCell>
                                             <TableCell className="font-medium text-sm">{o.customer_name}</TableCell>
-                                            <TableCell className="text-xs capitalize">{o.delivery_method === "livraison" ? "Livraison" : "Retrait"}</TableCell>
+                                            <TableCell className="text-xs">{o.delivery_method === "livraison" ? "Livraison" : "Retrait"}</TableCell>
                                             <TableCell className="font-semibold text-sm">{o.total_amount?.toFixed(2)}&euro;</TableCell>
                                             <TableCell>{getStatusBadge(o.status)}</TableCell>
                                             <TableCell>
@@ -310,7 +356,89 @@ export default function AdminDashboard() {
                         </div>
                     </TabsContent>
 
-                    {/* PRODUCTS TAB */}
+                    {/* ── Onglet Livraisons ──────────────────────────────── */}
+                    <TabsContent value="deliveries">
+                        <div className="space-y-6">
+                            <div className="flex justify-between items-center">
+                                <p className="text-sm text-gray-500">{deliveries.total} livraison{deliveries.total > 1 ? "s" : ""} en cours</p>
+                                <button onClick={fetchDeliveries} className="text-sm text-boudal-gold flex items-center gap-1 hover:underline">
+                                    <RefreshCw className="w-3 h-3" /> Actualiser
+                                </button>
+                            </div>
+
+                            {deliveries.total === 0 ? (
+                                <div className="bg-white rounded-lg border p-12 text-center text-gray-400">
+                                    <Truck className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                                    <p className="font-serif text-lg">Aucune livraison en cours</p>
+                                    <p className="text-xs mt-1">Les commandes livrées ou annulées n'apparaissent pas ici</p>
+                                </div>
+                            ) : (
+                                Object.entries(deliveries.grouped).map(([slot, slotOrders]) => (
+                                    <div key={slot} className="bg-white rounded-lg shadow-sm border overflow-hidden">
+                                        <div className="p-4 bg-boudal-green/5 border-b flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <Truck className="w-4 h-4 text-boudal-gold" />
+                                                <h3 className="font-semibold text-boudal-green">
+                                                    {SLOT_LABELS[slot] || slot}
+                                                </h3>
+                                            </div>
+                                            <span className="text-xs bg-boudal-gold text-white px-2 py-1 rounded-full font-semibold">
+                                                {slotOrders.length} commande{slotOrders.length > 1 ? "s" : ""}
+                                            </span>
+                                        </div>
+                                        <div className="divide-y">
+                                            {slotOrders.map(order => (
+                                                <div key={order.id} className="p-4">
+                                                    <div className="flex items-start justify-between gap-3 mb-2">
+                                                        <div>
+                                                            <p className="font-semibold text-sm text-boudal-green">{order.customer_name}</p>
+                                                            <p className="text-xs text-gray-500">{order.customer_phone}</p>
+                                                            {order.customer_address && (
+                                                                <p className="text-xs text-gray-500 mt-0.5">📍 {order.customer_address}</p>
+                                                            )}
+                                                        </div>
+                                                        <div className="text-right shrink-0">
+                                                            <p className="font-bold text-boudal-gold">{order.total_amount?.toFixed(2)} €</p>
+                                                            <div className="mt-1">{getStatusBadge(order.status)}</div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-xs text-gray-500 mt-2 space-y-0.5 pl-2 border-l-2 border-boudal-sage/30">
+                                                        {order.items?.map((item, i) => (
+                                                            <p key={i}>
+                                                                {item.product_name} · {item.quantity} {item.mode === "piece" ? "pcs" : "kg"}
+                                                                {item.item_note && <span className="italic text-gray-400"> ({item.item_note})</span>}
+                                                            </p>
+                                                        ))}
+                                                    </div>
+                                                    {order.global_comment && (
+                                                        <p className="text-xs text-gray-400 italic mt-2">💬 {order.global_comment}</p>
+                                                    )}
+                                                    <div className="mt-3 flex items-center gap-3">
+                                                        <select
+                                                            value={order.status}
+                                                            onChange={e => updateStatus(order.id, e.target.value)}
+                                                            className="text-xs border rounded px-2 py-1 bg-white focus:border-boudal-gold outline-none"
+                                                        >
+                                                            {STATUS_OPTIONS.filter(s => s.value !== "pending_payment").map(s => (
+                                                                <option key={s.value} value={s.value}>{s.label}</option>
+                                                            ))}
+                                                        </select>
+                                                        {order.customer_phone && (
+                                                            <a href={`tel:${order.customer_phone}`} className="text-xs text-boudal-green hover:text-boudal-gold underline">
+                                                                📞 Appeler
+                                                            </a>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </TabsContent>
+
+                    {/* ── Onglet Produits ────────────────────────────────── */}
                     <TabsContent value="products">
                         <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
                             <div className="p-4 flex items-center justify-between border-b">
@@ -338,7 +466,10 @@ export default function AdminDashboard() {
                                             <TableCell className="text-xs capitalize">{p.subcategory}</TableCell>
                                             <TableCell className="text-sm">
                                                 {p.discount_percentage > 0 ? (
-                                                    <span className="text-red-500">{(p.price * (1 - p.discount_percentage / 100)).toFixed(2)}&euro; <span className="text-gray-400 line-through text-xs">{p.price?.toFixed(2)}&euro;</span></span>
+                                                    <span className="text-red-500">
+                                                        {(p.price * (1 - p.discount_percentage / 100)).toFixed(2)}&euro;{" "}
+                                                        <span className="text-gray-400 line-through text-xs">{p.price?.toFixed(2)}&euro;</span>
+                                                    </span>
                                                 ) : (
                                                     <span>{p.price?.toFixed(2)}&euro;</span>
                                                 )}
@@ -355,7 +486,11 @@ export default function AdminDashboard() {
                                                     <span className="text-xs text-green-600">{p.stock_quantity}</span>
                                                 )}
                                             </TableCell>
-                                            <TableCell><span className={`text-xs font-medium ${p.is_active ? "text-green-600" : "text-red-500"}`}>{p.is_active ? "Oui" : "Non"}</span></TableCell>
+                                            <TableCell>
+                                                <span className={`text-xs font-medium ${p.is_active ? "text-green-600" : "text-red-500"}`}>
+                                                    {p.is_active ? "Oui" : "Non"}
+                                                </span>
+                                            </TableCell>
                                             <TableCell>
                                                 <div className="flex items-center gap-1">
                                                     <button data-testid={`edit-product-${p.id}`} onClick={() => openProductForm(p)} className="p-1.5 text-boudal-green hover:text-boudal-gold transition-colors">
@@ -375,7 +510,7 @@ export default function AdminDashboard() {
                 </Tabs>
             </div>
 
-            {/* ORDER DETAIL DIALOG */}
+            {/* ── Dialog détail commande ─────────────────────────────── */}
             <Dialog open={!!selectedOrder} onOpenChange={() => setSelectedOrder(null)}>
                 <DialogContent className="max-w-lg bg-white">
                     <DialogHeader>
@@ -385,21 +520,27 @@ export default function AdminDashboard() {
                     {orderDetail && (
                         <div className="space-y-4 text-sm">
                             <div className="grid grid-cols-2 gap-3">
-                                <div><span className="text-gray-500">Client:</span> <strong>{orderDetail.customer_name}</strong></div>
-                                <div><span className="text-gray-500">Tel:</span> <strong>{orderDetail.customer_phone}</strong></div>
-                                <div><span className="text-gray-500">Livraison:</span> <strong className="capitalize">{orderDetail.delivery_method}</strong></div>
-                                <div><span className="text-gray-500">Paiement:</span> <strong className="capitalize">{orderDetail.payment_method}</strong></div>
+                                <div><span className="text-gray-500">Client :</span> <strong>{orderDetail.customer_name}</strong></div>
+                                <div><span className="text-gray-500">Tel :</span> <strong>{orderDetail.customer_phone}</strong></div>
+                                <div><span className="text-gray-500">Livraison :</span> <strong className="capitalize">{orderDetail.delivery_method}</strong></div>
+                                <div><span className="text-gray-500">Paiement :</span> <strong className="capitalize">{orderDetail.payment_method}</strong></div>
+                                {orderDetail.delivery_slot && (
+                                    <div><span className="text-gray-500">Créneau :</span> <strong>{SLOT_LABELS[orderDetail.delivery_slot] || orderDetail.delivery_slot}</strong></div>
+                                )}
                             </div>
-                            {orderDetail.customer_email && <div><span className="text-gray-500">Email:</span> {orderDetail.customer_email}</div>}
-                            {orderDetail.customer_address && <div><span className="text-gray-500">Adresse:</span> {orderDetail.customer_address}</div>}
-                            {orderDetail.global_comment && <div><span className="text-gray-500">Note:</span> {orderDetail.global_comment}</div>}
+                            {orderDetail.customer_email && <div><span className="text-gray-500">Email :</span> {orderDetail.customer_email}</div>}
+                            {orderDetail.customer_address && <div><span className="text-gray-500">Adresse :</span> {orderDetail.customer_address}</div>}
+                            {orderDetail.global_comment && <div><span className="text-gray-500">Note :</span> {orderDetail.global_comment}</div>}
                             <div className="border-t pt-3 space-y-2">
-                                <p className="font-semibold text-boudal-green">Articles:</p>
+                                <p className="font-semibold text-boudal-green">Articles :</p>
                                 {orderDetail.items?.map((item, i) => (
                                     <div key={i} className="flex justify-between items-center py-1 border-b border-dashed last:border-0">
                                         <div>
                                             <p className="font-medium">{item.product_name}</p>
-                                            <p className="text-xs text-gray-500">{item.quantity} {item.mode === "piece" ? "pcs" : "kg"} {item.item_note && `- ${item.item_note}`}</p>
+                                            <p className="text-xs text-gray-500">
+                                                {item.quantity} {item.mode === "piece" ? "pcs" : "kg"}
+                                                {item.item_note && ` - ${item.item_note}`}
+                                            </p>
                                         </div>
                                         <span className="font-semibold">{item.line_total?.toFixed(2)}&euro;</span>
                                     </div>
@@ -414,18 +555,20 @@ export default function AdminDashboard() {
                 </DialogContent>
             </Dialog>
 
-            {/* PRODUCT FORM DIALOG */}
+            {/* ── Dialog formulaire produit ──────────────────────────── */}
             <Dialog open={productDialog} onOpenChange={setProductDialog}>
                 <DialogContent className="max-w-lg bg-white">
                     <DialogHeader>
-                        <DialogTitle className="font-serif text-boudal-green">{editingProduct ? "Modifier le produit" : "Ajouter un produit"}</DialogTitle>
+                        <DialogTitle className="font-serif text-boudal-green">
+                            {editingProduct ? "Modifier le produit" : "Ajouter un produit"}
+                        </DialogTitle>
                         <DialogDescription className="text-xs text-gray-500">Remplissez les informations du produit</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
-                        <input data-testid="product-name-input" value={productForm.name} onChange={e => setProductForm(p => ({...p, name: e.target.value}))} placeholder="Nom du produit" className="w-full p-2.5 border rounded text-sm focus:border-boudal-gold outline-none" />
+                        <input data-testid="product-name-input" value={productForm.name} onChange={e => setProductForm(p => ({ ...p, name: e.target.value }))} placeholder="Nom du produit" className="w-full p-2.5 border rounded text-sm focus:border-boudal-gold outline-none" />
                         <div className="grid grid-cols-2 gap-3">
-                            <input data-testid="product-price-input" value={productForm.price} onChange={e => setProductForm(p => ({...p, price: e.target.value}))} placeholder="Prix" type="number" step="0.01" className="p-2.5 border rounded text-sm focus:border-boudal-gold outline-none" />
-                            <select value={productForm.unit} onChange={e => setProductForm(p => ({...p, unit: e.target.value}))} className="p-2.5 border rounded text-sm bg-white focus:border-boudal-gold outline-none">
+                            <input data-testid="product-price-input" value={productForm.price} onChange={e => setProductForm(p => ({ ...p, price: e.target.value }))} placeholder="Prix" type="number" step="0.01" className="p-2.5 border rounded text-sm focus:border-boudal-gold outline-none" />
+                            <select value={productForm.unit} onChange={e => setProductForm(p => ({ ...p, unit: e.target.value }))} className="p-2.5 border rounded text-sm bg-white focus:border-boudal-gold outline-none">
                                 <option value="kg">kg</option>
                                 <option value="piece">piece</option>
                                 <option value="botte">botte</option>
@@ -434,27 +577,27 @@ export default function AdminDashboard() {
                             </select>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
-                            <select value={productForm.category} onChange={e => setProductForm(p => ({...p, category: e.target.value}))} className="p-2.5 border rounded text-sm bg-white focus:border-boudal-gold outline-none">
+                            <select value={productForm.category} onChange={e => setProductForm(p => ({ ...p, category: e.target.value }))} className="p-2.5 border rounded text-sm bg-white focus:border-boudal-gold outline-none">
                                 <option value="fruits">Fruits</option>
                                 <option value="legumes">Legumes</option>
                                 <option value="herbes">Herbes</option>
                                 <option value="epicerie">Epicerie</option>
                                 <option value="paniers">Paniers</option>
                             </select>
-                            <input value={productForm.subcategory} onChange={e => setProductForm(p => ({...p, subcategory: e.target.value}))} placeholder="Sous-categorie" className="p-2.5 border rounded text-sm focus:border-boudal-gold outline-none" />
+                            <input value={productForm.subcategory} onChange={e => setProductForm(p => ({ ...p, subcategory: e.target.value }))} placeholder="Sous-categorie" className="p-2.5 border rounded text-sm focus:border-boudal-gold outline-none" />
                         </div>
-                        <input value={productForm.image_url} onChange={e => setProductForm(p => ({...p, image_url: e.target.value}))} placeholder="URL image" className="w-full p-2.5 border rounded text-sm focus:border-boudal-gold outline-none" />
+                        <input value={productForm.image_url} onChange={e => setProductForm(p => ({ ...p, image_url: e.target.value }))} placeholder="URL image" className="w-full p-2.5 border rounded text-sm focus:border-boudal-gold outline-none" />
                         <div className="flex items-center gap-4">
                             <label className="flex items-center gap-2 text-sm">
-                                <input type="checkbox" checked={productForm.can_piece} onChange={e => setProductForm(p => ({...p, can_piece: e.target.checked}))} className="rounded" />
+                                <input type="checkbox" checked={productForm.can_piece} onChange={e => setProductForm(p => ({ ...p, can_piece: e.target.checked }))} className="rounded" />
                                 Vente a la piece
                             </label>
                             {productForm.can_piece && (
-                                <input value={productForm.piece_weight} onChange={e => setProductForm(p => ({...p, piece_weight: e.target.value}))} placeholder="Poids piece (kg)" type="number" step="0.01" className="p-2 border rounded text-sm w-32 focus:border-boudal-gold outline-none" />
+                                <input value={productForm.piece_weight} onChange={e => setProductForm(p => ({ ...p, piece_weight: e.target.value }))} placeholder="Poids piece (kg)" type="number" step="0.01" className="p-2 border rounded text-sm w-32 focus:border-boudal-gold outline-none" />
                             )}
                         </div>
                         <label className="flex items-center gap-2 text-sm">
-                            <input type="checkbox" checked={productForm.is_active} onChange={e => setProductForm(p => ({...p, is_active: e.target.checked}))} className="rounded" />
+                            <input type="checkbox" checked={productForm.is_active} onChange={e => setProductForm(p => ({ ...p, is_active: e.target.checked }))} className="rounded" />
                             Produit actif (visible en boutique)
                         </label>
                         <div className="border-t border-dashed pt-3">
@@ -462,11 +605,11 @@ export default function AdminDashboard() {
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <label className="block text-xs text-gray-500 mb-1">Quantite en stock (-1 = illimite)</label>
-                                    <input value={productForm.stock_quantity} onChange={e => setProductForm(p => ({...p, stock_quantity: e.target.value}))} type="number" className="w-full p-2.5 border rounded text-sm focus:border-boudal-gold outline-none" />
+                                    <input value={productForm.stock_quantity} onChange={e => setProductForm(p => ({ ...p, stock_quantity: e.target.value }))} type="number" className="w-full p-2.5 border rounded text-sm focus:border-boudal-gold outline-none" />
                                 </div>
                                 <div>
                                     <label className="block text-xs text-gray-500 mb-1">Seuil alerte stock bas</label>
-                                    <input value={productForm.low_stock_threshold} onChange={e => setProductForm(p => ({...p, low_stock_threshold: e.target.value}))} type="number" className="w-full p-2.5 border rounded text-sm focus:border-boudal-gold outline-none" />
+                                    <input value={productForm.low_stock_threshold} onChange={e => setProductForm(p => ({ ...p, low_stock_threshold: e.target.value }))} type="number" className="w-full p-2.5 border rounded text-sm focus:border-boudal-gold outline-none" />
                                 </div>
                             </div>
                         </div>
@@ -475,11 +618,11 @@ export default function AdminDashboard() {
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <label className="block text-xs text-gray-500 mb-1">Reduction (%)</label>
-                                    <input data-testid="product-discount-input" value={productForm.discount_percentage} onChange={e => setProductForm(p => ({...p, discount_percentage: e.target.value}))} type="number" step="1" min="0" max="90" className="w-full p-2.5 border rounded text-sm focus:border-boudal-gold outline-none" />
+                                    <input data-testid="product-discount-input" value={productForm.discount_percentage} onChange={e => setProductForm(p => ({ ...p, discount_percentage: e.target.value }))} type="number" step="1" min="0" max="90" className="w-full p-2.5 border rounded text-sm focus:border-boudal-gold outline-none" />
                                 </div>
                                 <div>
                                     <label className="block text-xs text-gray-500 mb-1">Label promo (optionnel)</label>
-                                    <input value={productForm.discount_label} onChange={e => setProductForm(p => ({...p, discount_label: e.target.value}))} placeholder="Ex: Ete" className="w-full p-2.5 border rounded text-sm focus:border-boudal-gold outline-none" />
+                                    <input value={productForm.discount_label} onChange={e => setProductForm(p => ({ ...p, discount_label: e.target.value }))} placeholder="Ex: Ete" className="w-full p-2.5 border rounded text-sm focus:border-boudal-gold outline-none" />
                                 </div>
                             </div>
                         </div>
