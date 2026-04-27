@@ -145,6 +145,7 @@ class OrderCreate(BaseModel):
     customer_email: str = ""
     customer_address: str = ""
     delivery_method: str = "livraison"
+    delivery_slot: str = ""
     payment_method: str = "especes"
     global_comment: str = ""
     total_amount: float
