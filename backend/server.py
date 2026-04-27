@@ -339,13 +339,14 @@ async def delete_product(product_id: str, user=Depends(get_current_user)):
 @api_router.post("/orders")
 async def create_order(body: OrderCreate, background_tasks: BackgroundTasks):
     order_id = str(uuid.uuid4())
-    order = {
+       order = {
         "id": order_id,
         "customer_name": body.customer_name,
         "customer_phone": body.customer_phone,
         "customer_email": body.customer_email,
         "customer_address": body.customer_address,
         "delivery_method": body.delivery_method,
+        "delivery_slot": body.delivery_slot,
         "payment_method": body.payment_method,
         "global_comment": body.global_comment,
         "total_amount": body.total_amount,
