@@ -432,7 +432,25 @@ async def track_order(order_id: str):
     order["items"] = items
     return order
 
+# ==================== DELIVERY MANAGEMENT ====================
 
+@api_router.get("/deliveries")
+async def list_deliveries(user=Depends(get_current_user)):
+    orders = await db.orders.find(
+        {"delivery_method": "livraison", "status": {"$nin": ["cancelled", "delivered"]}},
+        {"_id": 0}
+    ).sort("created_at", 1).to_list(1000)
+
+    grouped = {}
+    for order in orders:
+        slot = order.get("delivery_slot") or "Non précisé"
+        if slot not in grouped:
+            grouped[slot] = []
+        items = await db.order_items.find({"order_id": order["id"]}, {"_id": 0}).to_list(50)
+        order["items"] = items
+        grouped[slot].append(order)
+
+    return {"grouped": grouped, "total": len(orders)}
 # ==================== ADMIN STATS ====================
 
 @api_router.get("/admin/stats")
